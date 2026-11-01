@@ -41,7 +41,9 @@ Always quote the script path.
    ```
 
    Save `session_id` for the rest of the task. Reuse it for every follow-up
-   message. Do not create a new session for every progress update.
+   message. Do not create a new session for every progress update. If you send
+   `register` again with an existing ID, it restores that session to the normal
+   active state without a notification; a new `complete` is then required.
 
 2. Report task completion immediately before your final answer:
 

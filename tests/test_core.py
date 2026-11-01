@@ -43,7 +43,7 @@ def error(session_id: str = "s1", text: str = "boom") -> Message:
     )
 
 
-def test_register_adds_session() -> None:
+def test_register_adds_session_without_notification() -> None:
     coordinator = Coordinator()
     transition = coordinator.handle_message(register(), now=10.0)
     sessions = coordinator.sessions
@@ -52,7 +52,29 @@ def test_register_adds_session() -> None:
     assert sessions[0].name == "Agent"
     assert sessions[0].completed is False
     assert transition.notices == []
-    assert "注册会话" in transition.logs[0]
+    assert "注册新会话" in transition.logs[0]
+
+
+@pytest.mark.parametrize("attention_message", [action, error])
+def test_reregister_existing_id_restores_normal_without_notification(
+    attention_message,
+) -> None:
+    coordinator = Coordinator(30)
+    coordinator.handle_message(register(), now=0.0)
+    warned = coordinator.handle_message(attention_message(text="attention"), now=1.0)
+    assert warned.notices
+
+    transition = coordinator.handle_message(
+        register("s1", "Restored Agent"), now=2.0
+    )
+    session = coordinator.sessions[0]
+    assert len(coordinator.sessions) == 1
+    assert session.name == "Restored Agent"
+    assert session.completed is False
+    assert session.last_event is Status.REGISTER
+    assert session.last_text == ""
+    assert transition.notices == []
+    assert any("恢复正常状态" in log for log in transition.logs)
 
 
 def test_complete_without_plan_only_marks_complete() -> None:
@@ -117,8 +139,11 @@ def test_duplicate_registration_reopens_completed_session() -> None:
     session = coordinator.sessions[0]
     assert session.completed is False
     assert session.name == "Agent v2"
+    assert session.last_event is Status.REGISTER
     assert coordinator.deadline is None
     assert coordinator.planned is True
+    assert transition.notices == []
+    assert any("正常状态" in log for log in transition.logs)
     assert any("取消" in log for log in transition.logs)
 
 

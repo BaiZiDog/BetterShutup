@@ -74,6 +74,11 @@ one frame, written in one `WriteFile`; the server closes after reading it. The
 body maximum is 16 MiB − 1. The reserved six bits in byte 0 must be zero.
 There is no acknowledgement channel.
 
+Status `00` is dual-purpose and never emits a notification: a new session ID
+registers a session; an existing ID updates its name, resets it to the normal
+active state (clearing completed/action/error state), and cancels any running
+countdown. A subsequent `01` is required before it counts as complete again.
+
 Keep `protocol.py`, the standalone Skill CLI's framing, and
 `skills/better-shutup/references/protocol.md` in sync. The parity tests in
 `tests/test_skill_client.py` are the guardrail.
@@ -95,7 +100,8 @@ Keep `protocol.py`, the standalone Skill CLI's framing, and
 
 `better_shutup/core.py` is pure, injectable-clock logic. Important rules:
 
-- Registering a new/reopened session cancels a running countdown while keeping
+- Status `00` never emits notifications. A new ID registers; an existing ID
+  restores normal active state and cancels a running countdown while keeping
   the plan armed.
 - A task is complete only after status `01`; `10`/`11` are notifications and do
   not complete a session. If a previously completed session later sends `10`

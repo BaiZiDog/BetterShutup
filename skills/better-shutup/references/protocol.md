@@ -46,11 +46,19 @@ empty. Text fields allow Unicode and newlines but not NUL.
 
 ## Examples
 
-### 00 Register
+### 00 Register / restore
 
 ```json
 {"session_name":"Claude Code · 优化登录流程","session_id":"7f3ac2e9d1ab"}
 ```
+
+Status `00` has two roles and never produces a notification card/sound:
+
+- New `session_id`: create the session.
+- Existing `session_id`: update the display name and restore that session to
+  the normal active state. This clears completed/action-needed/error flags and
+  cancels any running shutdown countdown. A later `01` is required again before
+  the session counts as complete.
 
 ### 01 Complete
 

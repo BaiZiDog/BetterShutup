@@ -120,6 +120,12 @@ byte3:  L7  ... L0          L = UTF-8 JSON 正文的字节数
 {"session_id": "abc-123", "error": "依赖安装失败"}
 ```
 
+状态码 `00` 有两种作用：
+
+- `session_id` 不存在：注册一个新会话。
+- `session_id` 已存在：把该会话恢复为正常的进行中状态，清除“已完成 / 需操作 / 错误”标记，并取消当前正在运行的关机倒计时。
+- 两种 `00` 都不弹出通知卡片，也不播放提示音。
+
 完整线协议见 `skills/better-shutup/references/protocol.md`。
 
 ## Agent CLI

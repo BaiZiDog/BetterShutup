@@ -182,6 +182,13 @@ class Coordinator:
         return transition
 
     def _handle_register(self, message: Message, transition: Transition) -> None:
+        """Status 00 has two meanings and never emits a notification.
+
+        A new session_id creates a session.  An existing session_id restores
+        that session to the normal active state, clearing completed/action/
+        error state; this also invalidates any active shutdown countdown.
+        """
+
         existing = self._sessions.get(message.session_id)
         if existing is None:
             session = Session(
@@ -190,10 +197,11 @@ class Coordinator:
             )
             self._sessions[message.session_id] = session
             transition.logs.append(
-                f"注册会话「{session.name}」 ({session.session_id})。"
+                f"注册新会话「{session.name}」 ({session.session_id})。"
             )
         else:
             was_completed = existing.completed
+            previous_event = existing.last_event
             existing.name = message.session_name
             existing.completed = False
             existing.last_event = Status.REGISTER
@@ -201,16 +209,20 @@ class Coordinator:
             existing.updated_at = datetime.now()
             if was_completed:
                 transition.logs.append(
-                    f"会话「{existing.name}」重新注册，已重新打开。"
+                    f"会话「{existing.name}」恢复正常状态（重新打开）。"
+                )
+            elif previous_event in (Status.ACTION, Status.ERROR):
+                transition.logs.append(
+                    f"会话「{existing.name}」恢复正常状态。"
                 )
             else:
                 transition.logs.append(
-                    f"会话「{existing.name}」更新注册信息。"
+                    f"会话「{existing.name}」注册信息已更新，状态正常。"
                 )
 
         if self._deadline is not None:
             self._deadline = None
-            transition.logs.append("新会话到达，本次关机倒计时已取消。")
+            transition.logs.append("会话状态变化，本次关机倒计时已取消。")
 
     def set_planned(self, enabled: bool, now: float | None = None) -> Transition:
         current = time.monotonic() if now is None else now
