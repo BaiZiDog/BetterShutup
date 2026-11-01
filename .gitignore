@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.smoke-data/
+*.log
+gui-*.png
+.venv/
+.venv-build/
+venv/
+build/
+dist/
+*.build/
+*.dist/
+*.onefile-build/
+*.egg-info/
