@@ -1,6 +1,6 @@
 # BetterShutup
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 仓库：<https://github.com/BaiZiDog/BetterShutup>
 
@@ -215,7 +215,9 @@ dist\SHA256SUMS.txt
 
 ## 许可证
 
-本项目使用 [Apache License 2.0](LICENSE)。
+本项目使用 [GNU General Public License v3.0](LICENSE)（GPL-3.0-only）。
+
+对应源码即本仓库；分发编译产物时请同时遵守 GPLv3 的源码提供要求。
 
 ## Agent Skill 兼容性参考
 

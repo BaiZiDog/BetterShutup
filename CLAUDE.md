@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 BetterShutup is a Windows-only Python/Tkinter application that receives agent
 session messages over a Windows named pipe, shows topmost notifications, and
 optionally shuts the machine down after every registered session completes.
-The repository is public under Apache-2.0.
+The repository is public under GPL-3.0-only.
 
 The desktop app and the Agent Skill are independent deliveries:
 
@@ -143,4 +143,4 @@ Keep `protocol.py`, the standalone Skill CLI's framing, and
   assume the current working directory. Claude Code may use
   `${CLAUDE_SKILL_DIR}`, while DSH/TRAE must use the actual skill directory.
 - The public repository is maintained as `BaiZiDog/BetterShutup` under the
-  Apache License 2.0 (`LICENSE`, `NOTICE`).
+  GNU General Public License v3.0, GPL-3.0-only (`LICENSE`, `NOTICE`).
