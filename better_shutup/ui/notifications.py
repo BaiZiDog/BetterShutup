@@ -116,6 +116,32 @@ class NotificationManager:
             card.destroy()
         self._active.clear()
 
+    def dismiss_session(
+        self,
+        session_id: str,
+        kind: NoticeKind | None = None,
+    ) -> None:
+        """Silently close notifications for one session, optionally by kind."""
+
+        if self._closed:
+            return
+        if self._pending:
+            self._pending = deque(
+                item
+                for item in self._pending
+                if not (
+                    item.session_id == session_id
+                    and (kind is None or item.kind is kind)
+                )
+            )
+        for card in list(self._active):
+            if card.item.session_id != session_id:
+                continue
+            if kind is not None and card.item.kind is not kind:
+                continue
+            card.close()
+        self._layout()
+
     def _fill_slots(self) -> None:
         while self._pending and len(self._active) < self.max_visible:
             item = self._pending.popleft()

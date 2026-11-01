@@ -75,9 +75,11 @@ body maximum is 16 MiB − 1. The reserved six bits in byte 0 must be zero.
 There is no acknowledgement channel.
 
 Status `00` is dual-purpose and never emits a notification: a new session ID
-registers a session; an existing ID updates its name, resets it to the normal
-active state (clearing completed/action/error state), and cancels any running
-countdown. A subsequent `01` is required before it counts as complete again.
+registers a session; an existing ID is an acknowledgement that the user
+answered/performed the requested operation. It updates the name, clears only
+the action-needed state, and dismisses that session's outstanding action card.
+It must not reopen a completed session, clear an error state, or cancel an
+already-running countdown.
 
 Keep `protocol.py`, the standalone Skill CLI's framing, and
 `skills/better-shutup/references/protocol.md` in sync. The parity tests in
@@ -100,9 +102,10 @@ Keep `protocol.py`, the standalone Skill CLI's framing, and
 
 `better_shutup/core.py` is pure, injectable-clock logic. Important rules:
 
-- Status `00` never emits notifications. A new ID registers; an existing ID
-  restores normal active state and cancels a running countdown while keeping
-  the plan armed.
+- Status `00` never emits notifications. A new ID registers and cancels a
+  running countdown as new work; an existing ID only clears the action-needed
+  state (and dismisses that session's action card) while keeping
+  completion/error/countdown untouched.
 - A task is complete only after status `01`; `10`/`11` are notifications and do
   not complete a session. If a previously completed session later sends `10`
   or `11`, it is reopened and any running countdown is cancelled.
@@ -150,3 +153,5 @@ Keep `protocol.py`, the standalone Skill CLI's framing, and
   `${CLAUDE_SKILL_DIR}`, while DSH/TRAE must use the actual skill directory.
 - The public repository is maintained as `BaiZiDog/BetterShutup` under the
   GNU General Public License v3.0, GPL-3.0-only (`LICENSE`, `NOTICE`).
+
+无论何时都使用better_shutup管理会话，我说类似“完成任务后关机也都自动等价为使用better_shutup的功能

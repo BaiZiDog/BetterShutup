@@ -130,6 +130,22 @@ def test_cli_lifecycle_and_portability() -> None:
         assert action_message.status is Status.ACTION
         assert action_message.text == "需要确认"
 
+        resume = run_cli(
+            "resume",
+            "--session-id",
+            "skill-1",
+            "--name",
+            "Skill CLI · 测试",
+            "--pipe",
+            pipe_name,
+        )
+        assert resume.returncode == 0, resume.stderr + resume.stdout
+        resume_payload = json.loads(resume.stdout)
+        assert resume_payload["event"] == "resume"
+        resume_message = decode_frame(q.get(timeout=3))
+        assert resume_message.status is Status.REGISTER
+        assert resume_message.session_name == "Skill CLI · 测试"
+
         complete = run_cli(
             "complete",
             "--session-id",

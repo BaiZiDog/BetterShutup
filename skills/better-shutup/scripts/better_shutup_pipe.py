@@ -351,6 +351,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Stable session id; generated if omitted",
     )
 
+    resume = sub.add_parser(
+        "resume",
+        parents=[common],
+        help="Clear an existing session's action-needed state (00)",
+    )
+    resume.add_argument("--session-id", required=True)
+    resume.add_argument(
+        "--name",
+        required=True,
+        help="Session name to keep/update",
+    )
+
     complete = sub.add_parser(
         "complete",
         parents=[common],
@@ -389,17 +401,23 @@ def main(argv: list[str] | None = None) -> int:
             session_id = uuid.uuid4().hex
         status = STATUS_REGISTER
         fields = {"session_name": args.name, "session_id": session_id}
+        event = "register"
+    elif command == "resume":
+        status = STATUS_REGISTER
+        fields = {"session_name": args.name, "session_id": session_id}
+        event = "resume"
     elif command == "complete":
         status = STATUS_COMPLETE
         fields = {"session_id": session_id, "message": args.message}
+        event = "complete"
     elif command == "action":
         status = STATUS_ACTION
         fields = {"session_id": session_id, "instruction": args.instruction}
+        event = "action"
     else:
         status = STATUS_ERROR
         fields = {"session_id": session_id, "error": args.error}
-
-    event = STATUS_NAMES[status]
+        event = "error"
     try:
         frame = build_frame(status, fields)
         if args.dry_run:

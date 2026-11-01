@@ -384,6 +384,11 @@ class BetterShutupApp:
     def _apply_transition(self, transition: Transition) -> None:
         for line in transition.logs:
             self._log(_log_level_for_line(line), line)
+        for session_id in transition.dismiss_action_session_ids:
+            try:
+                self.notifications.dismiss_session(session_id, NoticeKind.ACTION)
+            except Exception:
+                LOGGER.exception("关闭已恢复会话的操作通知失败")
         for notice in transition.notices:
             if notice.kind is not NoticeKind.PROTOCOL_ERROR and notice.text.strip():
                 prefix = {

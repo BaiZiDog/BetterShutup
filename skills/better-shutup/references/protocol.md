@@ -46,7 +46,7 @@ empty. Text fields allow Unicode and newlines but not NUL.
 
 ## Examples
 
-### 00 Register / restore
+### 00 Register / resume
 
 ```json
 {"session_name":"Claude Code · 优化登录流程","session_id":"7f3ac2e9d1ab"}
@@ -54,11 +54,13 @@ empty. Text fields allow Unicode and newlines but not NUL.
 
 Status `00` has two roles and never produces a notification card/sound:
 
-- New `session_id`: create the session.
-- Existing `session_id`: update the display name and restore that session to
-  the normal active state. This clears completed/action-needed/error flags and
-  cancels any running shutdown countdown. A later `01` is required again before
-  the session counts as complete.
+- New `session_id`: register a new session.
+- Existing `session_id`: acknowledge that the user answered or performed the
+  requested operation. Update the display name, clear the session's
+  **action-needed** state so it returns to normal in-progress, and dismiss any
+  outstanding action-needed notification card for that session. This does not
+  change completion state, does not clear an error state, and does not cancel
+  an already-running shutdown countdown.
 
 ### 01 Complete
 
@@ -115,10 +117,14 @@ Use the bundled helper rather than reimplementing ctypes unless necessary.
 
 ```text
 python better_shutup_pipe.py register --name "Agent · Task"
+python better_shutup_pipe.py resume   --session-id "<id>" --name "Agent · Task"
 python better_shutup_pipe.py complete --session-id "<id>" --message "done"
 python better_shutup_pipe.py action   --session-id "<id>" --instruction "..."
 python better_shutup_pipe.py error    --session-id "<id>" --error "..."
 ```
+
+`resume` sends status `00` with an existing session ID; `register` with an
+existing ID has the same wire effect.
 
 The CLI prints one JSON object and uses exit code 0 for success, 2 for pipe
 availability/write failures, and 3 for invalid input or command-line arguments.

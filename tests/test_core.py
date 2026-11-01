@@ -55,13 +55,10 @@ def test_register_adds_session_without_notification() -> None:
     assert "注册新会话" in transition.logs[0]
 
 
-@pytest.mark.parametrize("attention_message", [action, error])
-def test_reregister_existing_id_restores_normal_without_notification(
-    attention_message,
-) -> None:
+def test_reregister_after_action_clears_attention_without_notification() -> None:
     coordinator = Coordinator(30)
     coordinator.handle_message(register(), now=0.0)
-    warned = coordinator.handle_message(attention_message(text="attention"), now=1.0)
+    warned = coordinator.handle_message(action(text="please answer"), now=1.0)
     assert warned.notices
 
     transition = coordinator.handle_message(
@@ -72,9 +69,24 @@ def test_reregister_existing_id_restores_normal_without_notification(
     assert session.name == "Restored Agent"
     assert session.completed is False
     assert session.last_event is Status.REGISTER
-    assert session.last_text == ""
+    assert session.last_text == "已恢复正常状态"
     assert transition.notices == []
-    assert any("恢复正常状态" in log for log in transition.logs)
+    assert transition.dismiss_action_session_ids == ["s1"]
+    assert any("需要操作状态已清除" in log for log in transition.logs)
+
+
+def test_reregister_does_not_clear_error_state() -> None:
+    coordinator = Coordinator(30)
+    coordinator.handle_message(register(), now=0.0)
+    coordinator.handle_message(error(text="still broken"), now=1.0)
+
+    transition = coordinator.handle_message(register("s1", "Updated"), now=2.0)
+    session = coordinator.sessions[0]
+    assert session.last_event is Status.ERROR
+    assert session.last_text == "still broken"
+    assert transition.notices == []
+    assert transition.dismiss_action_session_ids == []
+    assert any("错误状态保留" in log for log in transition.logs)
 
 
 def test_complete_without_plan_only_marks_complete() -> None:
@@ -128,7 +140,7 @@ def test_attention_after_completion_reopens_and_cancels_countdown(
     assert coordinator.deadline == 24.0
 
 
-def test_duplicate_registration_reopens_completed_session() -> None:
+def test_reregister_completed_session_preserves_completion_and_countdown() -> None:
     coordinator = Coordinator(60)
     coordinator.handle_message(register(), now=0.0)
     coordinator.handle_message(complete(), now=1.0)
@@ -137,14 +149,14 @@ def test_duplicate_registration_reopens_completed_session() -> None:
 
     transition = coordinator.handle_message(register("s1", "Agent v2"), now=3.0)
     session = coordinator.sessions[0]
-    assert session.completed is False
+    assert session.completed is True
     assert session.name == "Agent v2"
-    assert session.last_event is Status.REGISTER
-    assert coordinator.deadline is None
+    assert coordinator.deadline == 62.0
     assert coordinator.planned is True
     assert transition.notices == []
-    assert any("正常状态" in log for log in transition.logs)
-    assert any("取消" in log for log in transition.logs)
+    assert transition.dismiss_action_session_ids == []
+    assert any("保持已完成状态" in log for log in transition.logs)
+    assert not any("倒计时已取消" in log for log in transition.logs)
 
 
 def test_plan_arm_without_sessions_waits() -> None:

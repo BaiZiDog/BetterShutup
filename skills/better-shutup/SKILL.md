@@ -41,9 +41,7 @@ Always quote the script path.
    ```
 
    Save `session_id` for the rest of the task. Reuse it for every follow-up
-   message. Do not create a new session for every progress update. If you send
-   `register` again with an existing ID, it restores that session to the normal
-   active state without a notification; a new `complete` is then required.
+   message. Do not create a new session for every progress update.
 
 2. Report task completion immediately before your final answer:
 
@@ -58,18 +56,32 @@ Always quote the script path.
    python "<SKILL_DIR>/scripts/better_shutup_pipe.py" action --session-id "7f3ac2..." --instruction "需要确认是否保留旧版登录接口的兼容层。"
    ```
 
+   After the user answers or performs the requested operation, acknowledge it
+   with `resume` using the same session ID and name:
+
+   ```text
+   python "<SKILL_DIR>/scripts/better_shutup_pipe.py" resume --session-id "7f3ac2..." --name "Claude Code · 优化登录流程"
+   ```
+
+   `resume` sends status `00` for the existing session, clears the app's
+   "需要操作" state, and dismisses the outstanding action-needed card. It
+   produces no new notification card or sound. Continue the task; send
+   `complete` only when the work is actually finished.
+
 4. If the task fails or encounters a blocking error, send `error`:
 
    ```text
    python "<SKILL_DIR>/scripts/better_shutup_pipe.py" error --session-id "7f3ac2..." --error "依赖安装失败：无法访问内部包仓库。"
    ```
 
-5. A session that sent `action` or `error` is still incomplete. Continue after
-   the user resolves it, then send `complete` when the work is actually done.
-   If the task is abandoned, tell the user that the session should be removed
-   in the BetterShutup window. Sending `action`/`error` after a previous
-   `complete` reopens the session and cancels any running shutdown countdown,
-   so send another `complete` once it is resolved.
+5. A session that sent `action` or `error` is still incomplete. `resume` only
+   clears the action-needed state; it does not clear a reported error or mark
+   the session complete. Continue after the user resolves it, then send
+   `complete` when the work is actually done. If the task is abandoned, tell
+   the user that the session should be removed in the BetterShutup window.
+   Sending `action`/`error` after a previous `complete` reopens the session and
+   cancels any running shutdown countdown, so send another `complete` once it
+   is resolved.
 
 ## Exit codes and failure handling
 

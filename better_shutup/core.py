@@ -45,6 +45,7 @@ class Transition:
     notices: list[Notice] = field(default_factory=list)
     logs: list[str] = field(default_factory=list)
     shutdown_due: bool = False
+    dismiss_action_session_ids: list[str] = field(default_factory=list)
 
 
 class Coordinator:
@@ -184,9 +185,11 @@ class Coordinator:
     def _handle_register(self, message: Message, transition: Transition) -> None:
         """Status 00 has two meanings and never emits a notification.
 
-        A new session_id creates a session.  An existing session_id restores
-        that session to the normal active state, clearing completed/action/
-        error state; this also invalidates any active shutdown countdown.
+        A new session_id registers a session.  An existing session_id is an
+        acknowledgement from the agent that the user answered or performed the
+        requested operation; it clears the session's "action needed" state so
+        the UI returns to normal.  It does not reopen completed sessions, clear
+        errors, or invalidate an already-running shutdown countdown.
         """
 
         existing = self._sessions.get(message.session_id)
@@ -199,30 +202,32 @@ class Coordinator:
             transition.logs.append(
                 f"注册新会话「{session.name}」 ({session.session_id})。"
             )
-        else:
-            was_completed = existing.completed
-            previous_event = existing.last_event
-            existing.name = message.session_name
-            existing.completed = False
-            existing.last_event = Status.REGISTER
-            existing.last_text = ""
-            existing.updated_at = datetime.now()
-            if was_completed:
-                transition.logs.append(
-                    f"会话「{existing.name}」恢复正常状态（重新打开）。"
-                )
-            elif previous_event in (Status.ACTION, Status.ERROR):
-                transition.logs.append(
-                    f"会话「{existing.name}」恢复正常状态。"
-                )
-            else:
-                transition.logs.append(
-                    f"会话「{existing.name}」注册信息已更新，状态正常。"
-                )
+            if self._deadline is not None:
+                self._deadline = None
+                transition.logs.append("新会话到达，本次关机倒计时已取消。")
+            return
 
-        if self._deadline is not None:
-            self._deadline = None
-            transition.logs.append("会话状态变化，本次关机倒计时已取消。")
+        existing.name = message.session_name
+        existing.updated_at = datetime.now()
+        if existing.completed:
+            transition.logs.append(
+                f"会话「{existing.name}」注册信息已更新，保持已完成状态。"
+            )
+        elif existing.last_event is Status.ACTION:
+            existing.last_event = Status.REGISTER
+            existing.last_text = "已恢复正常状态"
+            transition.dismiss_action_session_ids.append(existing.session_id)
+            transition.logs.append(
+                f"会话「{existing.name}」已确认用户操作，需要操作状态已清除。"
+            )
+        elif existing.last_event is Status.ERROR:
+            transition.logs.append(
+                f"会话「{existing.name}」注册信息已更新，错误状态保留。"
+            )
+        else:
+            transition.logs.append(
+                f"会话「{existing.name}」注册信息已更新，状态正常。"
+            )
 
     def set_planned(self, enabled: bool, now: float | None = None) -> Transition:
         current = time.monotonic() if now is None else now

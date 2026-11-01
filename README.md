@@ -122,9 +122,11 @@ byte3:  L7  ... L0          L = UTF-8 JSON 正文的字节数
 
 状态码 `00` 有两种作用：
 
-- `session_id` 不存在：注册一个新会话。
-- `session_id` 已存在：把该会话恢复为正常的进行中状态，清除“已完成 / 需操作 / 错误”标记，并取消当前正在运行的关机倒计时。
-- 两种 `00` 都不弹出通知卡片，也不播放提示音。
+- `session_id` 不存在：注册一个新会话；若倒计时正在运行，会因新工作到达而取消。
+- `session_id` 已存在：这是 Agent 在用户回答或完成操作后的确认信号，用来清除该会话的“需要操作”状态、关闭该会话尚未关闭的“需要操作”通知卡片，使界面恢复正常进行中状态。它会更新会话名称，但不会改变完成状态、不会清除错误状态，也不会取消正在运行的关机倒计时。
+- 两种 `00` 都不新增通知卡片，也不播放提示音。
+
+Agent Skill 提供 `resume` 命令专门发送这种确认；普通 `register` 也可以对已有 ID 发送 `00`。
 
 完整线协议见 `skills/better-shutup/references/protocol.md`。
 
@@ -134,12 +136,14 @@ Skill 自带一个仅依赖 Python 标准库的独立 CLI。它不导入桌面�
 
 ```text
 python "<SKILL_DIR>/scripts/better_shutup_pipe.py" register --name "Claude Code · 重构 API"
+python "<SKILL_DIR>/scripts/better_shutup_pipe.py" resume   --session-id "<id>" --name "Claude Code · 重构 API"
 python "<SKILL_DIR>/scripts/better_shutup_pipe.py" complete --session-id "<id>" --message "测试通过"
 python "<SKILL_DIR>/scripts/better_shutup_pipe.py" action   --session-id "<id>" --instruction "请确认是否发布"
 python "<SKILL_DIR>/scripts/better_shutup_pipe.py" error    --session-id "<id>" --error "依赖安装失败"
 ```
 
 - `register` 未指定 `--session-id` 时生成 UUID，并输出 JSON 供 Agent 记录。
+- `resume` 用已有 ID 发送状态 `00`，清除“需要操作”状态；不会生成通知。
 - 输出为 ASCII 安全 JSON；退出码：`0` 成功，`2` 管道不可用/写入失败，`3` 参数校验失败。
 - `--pipe` / `BETTER_SHUTUP_PIPE` 可覆盖管道名；默认 `\\.\pipe\BetterShutup`。
 - `--dry-run` 只校验并构造帧，不连接管道，用于诊断。
