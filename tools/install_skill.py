@@ -147,7 +147,13 @@ def main(argv: list[str] | None = None) -> int:
             destination.parent.mkdir(parents=True, exist_ok=True)
             if destination.exists():
                 shutil.rmtree(destination)
-            shutil.copytree(source, destination)
+            shutil.copytree(
+                source,
+                destination,
+                ignore=shutil.ignore_patterns(
+                    "__pycache__", "*.pyc", "*.pyo", ".DS_Store"
+                ),
+            )
         except OSError as exc:
             print(f"error: failed to install for {agent}: {exc}", file=sys.stderr)
             return 1
