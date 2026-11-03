@@ -1,6 +1,6 @@
 ---
 name: better-shutup
-description: Connect an agent task to the local BetterShutup desktop monitor over its Windows named pipe. Register a session, report completion, action-needed, errors, informational messages, plan steps, and step completion so the user sees topmost notifications and coordinated shutdown can wait for all sessions. Use by default when the user asks to read/review documentation, browse or search a directory, or use this skill, and treat completion as task-based rather than tied to the conversation. Also use when the user asks to track work with BetterShutup, coordinate automatic shutdown, register a session, report progress/needs-action/error/plan steps to BetterShutup, or mentions BetterShutup, 自动关机协调, 关机协同, 注册会话 or 汇报任务完成.
+description: Connect an agent task to the local BetterShutup desktop monitor over its Windows named pipe. Register a session, report completion, action-needed, errors, informational messages, plan steps, and step completion so the user sees topmost notifications and coordinated shutdown can wait for all sessions. Use by default when the user asks to read/review documentation, browse or search a directory, or use this skill, and treat completion as task-based rather than tied to the conversation. The agent may start the app but must never close it. Also use when the user asks to track work with BetterShutup, coordinate automatic shutdown, register a session, report progress/needs-action/error/plan steps to BetterShutup, or mentions BetterShutup, 自动关机协调, 关机协同, 注册会话 or 汇报任务完成.
 ---
 
 # BetterShutup session reporting
@@ -19,8 +19,10 @@ automatic shutdown, or use BetterShutup. Do not register unrelated ordinary
 chat that is none of the above and that the user did not ask to track; a
 session that never completes can block a planned shutdown.
 
-If the desktop app is not running, report that once and continue the task
-without tracking. Do not retry in a loop or try to start/stop the app yourself.
+If the desktop app is not running, you may start it once as described in
+“Application lifecycle: start only, never stop”. Never stop it yourself. If it
+cannot be started safely, report that once and continue the task without
+tracking; do not retry in a loop.
 
 ## Completion is task-based, not conversation-based
 
@@ -40,8 +42,27 @@ the current conversational turn ends:
 - If the task is abandoned, tell the user to remove the session. Do not send
   `complete` just to clear it.
 
-The desktop app must already be running. The skill only sends messages to it;
-it cannot start the app, enable planned shutdown, or cancel a countdown.
+BetterShutup must be running to send messages. You may start it when needed,
+but you must never close it. The skill cannot enable planned shutdown or cancel
+a countdown.
+
+## Application lifecycle: start only, never stop
+
+“管开不管关”: the Agent may **start** BetterShutup, but must **never close**
+it.
+
+- If BetterShutup is not running and the user wants tracking, you may start it
+  once using a launcher/path the user or project actually provides (for
+  example `start "" "C:\path\to\BetterShutup.exe"`, the project's `start.bat`,
+  or `python -m better_shutup`). Do not guess an unrelated path.
+- After starting it, leave it running. Do not close its window, kill/terminate
+  the process (`taskkill`, `Stop-Process`, etc.), or restart it.
+- Do not close or restart a BetterShutup instance that the user started.
+- Only the user may close the application or cancel a planned shutdown.
+- Starting the app does not authorize you to change its shutdown UI or enable
+  planned shutdown.
+- If you cannot start it safely, ask the user once to start it. If it remains
+  unavailable, continue the task without tracking and do not retry in a loop.
 
 ## Locate the helper script
 
@@ -194,9 +215,11 @@ casual progress update. Do not use `0001` merely because you are pausing.
 
 - Exit code `0`: the frame was written to the pipe. The protocol has no ACK,
   so a successful write does not prove the app accepted the session contents.
-- Exit code `2`: the app is not running or the pipe could not be reached. Tell
-  the user once and continue the coding task without tracking; do not retry in
-  a loop. Do not try to launch or stop the app yourself.
+- Exit code `2`: the app is not running or the pipe could not be reached. If
+  you know a safe launcher/path, you may try to start BetterShutup once;
+  otherwise ask the user. Never stop, close, or restart the app. If it remains
+  unavailable, tell the user once and continue the coding task without
+  tracking; do not retry in a loop.
 - Exit code `3`: the input was invalid (for example, an empty session ID, a
   session ID containing spaces, an invalid plan index, an oversized message, or
   missing/invalid command-line arguments).
@@ -242,8 +265,10 @@ at task start, retain its session ID, and keep it open until the task itself is
 finished. Send complete only when the task is done, not when the conversational
 turn ends. Use action when a user decision is required, and resume after the
 user responds. Plan updates, step completion, and informational messages are
-progress signals and never replace the final completion message. Do not
-register unrelated tasks that the user did not ask to track.
+progress signals and never replace the final completion message. You may start
+BetterShutup if it is not running, but never close, kill, or restart it, and
+never cancel a planned shutdown; only the user may do that. Do not register
+unrelated tasks that the user did not ask to track.
 ```
 
 This keeps sessions intentional and prevents stale sessions from blocking a

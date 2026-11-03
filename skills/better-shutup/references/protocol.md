@@ -7,6 +7,10 @@ reading the frame. There is no acknowledgement channel.
 This is protocol revision 2: the status field is four bits wide. A revision-1
 client that only understands `00`–`11` must be upgraded together with the app.
 
+**Application lifecycle:** an Agent may start BetterShutup when tracking is
+requested, but must never close, kill, or restart it. Only the user may close
+the app or cancel a planned shutdown.
+
 ## Pipe
 
 - Default name: `\\.\pipe\BetterShutup`

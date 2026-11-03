@@ -167,6 +167,9 @@ Keep `protocol.py`, the standalone Skill CLI's framing, and
   before showing any modal confirmation. Do not schedule a system `shutdown`
   timer that survives app exit.
 - Do not execute or eval text received from the pipe. It is only displayed.
+- The Agent Skill may start BetterShutup when tracking is requested, but it
+  must never close, kill, or restart the app, or cancel a planned shutdown.
+  Only the user may close the app; an agent that starts it leaves it running.
 - Preserve `PIPE_REJECT_REMOTE_CLIENTS` and single-instance behavior.
 - Build artifacts in `dist/`, Nuitka build directories, logs, caches, and
   generated data must stay untracked (`gitignore`).

@@ -65,6 +65,8 @@ python tools/install_skill.py --scope user --agents claude,dsh
 
 安装后重启 Agent（或在 TRAE 设置中导入技能）。当用户要求阅读/审查文档、浏览或搜索目录、或使用本 Skill 时，Agent 默认注册会话并跟踪；也支持明确的“用 BetterShutup 跟踪这个任务”“注册会话并汇报完成”“协调自动关机”等指令。会话是否结束按**任务本身**判定，而不是按当前对话轮次；任务未完成时，不会因为一轮回答结束就发送完成。无关的普通聊天不会自动占用会话。
 
+**管开不管关**：Agent 可以在需要时启动 BetterShutup（使用实际安装路径、`start.bat` 或 `python -m better_shutup`），但不得关闭窗口、结束进程、重启应用或取消计划关机；这些操作只能由用户执行。Agent 启动应用后应保持其运行。
+
 ### 推荐工作流
 
 1. 启动 BetterShutup，确认右上角显示“监听中”。
@@ -205,6 +207,7 @@ python -m better_shutup --pipe BetterShutup-Test --data-dir D:\temp\better-shutu
 ## 安全与限制
 
 - 命名管道设置了 `PIPE_REJECT_REMOTE_CLIENTS`，但本地任意进程仍可尝试发送消息，也可以建立空闲连接占用管道实例/工作线程。只在你信任的机器和 Agent 环境中使用，并且只在需要时开启计划关机。
+- **管开不管关**：Agent 可以启动 BetterShutup，但不得关闭窗口、结束进程、重启应用或取消计划关机；这些操作只能由用户执行。
 - `0010`/`0011` 及其他通知里的指令、错误、消息和计划文本只用于展示，应用不会执行任何消息内容。
 - 会话必须由 Agent 主动注册；符合协议的其他工具也可以发送消息。
 - Agent 必须在任务结束时发送完成；失联会话会让应用持续等待，可在界面中移除。

@@ -1,5 +1,5 @@
 """BetterShutup: coordinate AI agent sessions and scheduled shutdown."""
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 APP_NAME = "BetterShutup"
 DEFAULT_PIPE_NAME = r"\\.\pipe\BetterShutup"
