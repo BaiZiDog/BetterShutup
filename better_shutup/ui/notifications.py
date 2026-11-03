@@ -27,6 +27,14 @@ class NotificationItem:
     title: str | None = None
 
 
+_INFO_CARD_STYLE = {
+    "accent": colors.PRIMARY,
+    "soft": colors.PRIMARY_SOFT,
+    "sound": "notify",
+    "auto": True,
+    "button": "关闭",
+}
+
 _KIND_STYLE = {
     NoticeKind.COMPLETE: {
         "title": "任务完成",
@@ -54,6 +62,21 @@ _KIND_STYLE = {
         "sound": "error",
         "auto": False,
         "button": "关闭",
+    },
+    NoticeKind.NOTIFY: {
+        **_INFO_CARD_STYLE,
+        "title": "消息",
+        "icon": "i",
+    },
+    NoticeKind.PLAN: {
+        **_INFO_CARD_STYLE,
+        "title": "计划更新",
+        "icon": "≡",
+    },
+    NoticeKind.STEP_COMPLETE: {
+        **_INFO_CARD_STYLE,
+        "title": "步骤完成",
+        "icon": "✓",
     },
     NoticeKind.PROTOCOL_ERROR: {
         "title": "协议错误",

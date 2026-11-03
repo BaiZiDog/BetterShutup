@@ -12,9 +12,10 @@ from better_shutup.sounds import (
 )
 
 
-def test_generates_three_distinct_valid_wavs(tmp_path: Path) -> None:
+def test_generates_four_distinct_valid_wavs(tmp_path: Path) -> None:
     paths = ensure_default_sounds(tmp_path)
     assert set(paths) == set(SOUND_FILENAMES)
+    assert "notify" in paths
     hashes = set()
     for kind, path in paths.items():
         assert path.is_file()
@@ -25,7 +26,7 @@ def test_generates_three_distinct_valid_wavs(tmp_path: Path) -> None:
             duration = wav.getnframes() / wav.getframerate()
             assert 0.2 <= duration <= 2.0, (kind, duration)
         hashes.add(hashlib.sha256(path.read_bytes()).hexdigest())
-    assert len(hashes) == 3
+    assert len(hashes) == 4
 
 
 def test_existing_valid_sound_is_not_overwritten(tmp_path: Path) -> None:

@@ -67,6 +67,22 @@ def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
             Status.ERROR,
             {"session_id": "id-1", "error": "构建失败"},
         ),
+        (
+            Status.RESUME,
+            {"session_id": "id-1", "message": "用户已回答"},
+        ),
+        (
+            Status.NOTIFY,
+            {"session_id": "id-1", "message": "进度更新"},
+        ),
+        (
+            Status.PLAN,
+            {"session_id": "id-1", "3": "测试", "1": "分析"},
+        ),
+        (
+            Status.STEP_COMPLETE,
+            {"session_id": "id-1", "step_index": "1", "message": "完成"},
+        ),
     ],
 )
 def test_frame_bytes_match_application_protocol(status, fields) -> None:
@@ -92,6 +108,18 @@ def test_skill_validation() -> None:
         module.build_frame(
             module.STATUS_COMPLETE,
             {"session_id": "id", "message": "\ud800"},
+        )
+    with pytest.raises(module.ValidationError):
+        module.build_frame(module.STATUS_PLAN, {"session_id": "id"})
+    with pytest.raises(module.ValidationError):
+        module.build_frame(
+            module.STATUS_PLAN,
+            {"session_id": "id", "0": "zero"},
+        )
+    with pytest.raises(module.ValidationError):
+        module.build_frame(
+            module.STATUS_STEP_COMPLETE,
+            {"session_id": "id", "step_index": "01"},
         )
 
 
@@ -134,8 +162,8 @@ def test_cli_lifecycle_and_portability() -> None:
             "resume",
             "--session-id",
             "skill-1",
-            "--name",
-            "Skill CLI · 测试",
+            "--message",
+            "用户已回答",
             "--pipe",
             pipe_name,
         )
@@ -143,8 +171,60 @@ def test_cli_lifecycle_and_portability() -> None:
         resume_payload = json.loads(resume.stdout)
         assert resume_payload["event"] == "resume"
         resume_message = decode_frame(q.get(timeout=3))
-        assert resume_message.status is Status.REGISTER
-        assert resume_message.session_name == "Skill CLI · 测试"
+        assert resume_message.status is Status.RESUME
+        assert resume_message.text == "用户已回答"
+
+        notify = run_cli(
+            "notify",
+            "--session-id",
+            "skill-1",
+            "--message",
+            "进度更新",
+            "--pipe",
+            pipe_name,
+        )
+        assert notify.returncode == 0, notify.stderr + notify.stdout
+        notify_message = decode_frame(q.get(timeout=3))
+        assert notify_message.status is Status.NOTIFY
+        assert notify_message.text == "进度更新"
+
+        plan = run_cli(
+            "plan",
+            "--session-id",
+            "skill-1",
+            "--step",
+            "1",
+            "分析",
+            "--step",
+            "2",
+            "实现",
+            "--pipe",
+            pipe_name,
+        )
+        assert plan.returncode == 0, plan.stderr + plan.stdout
+        plan_message = decode_frame(q.get(timeout=3))
+        assert plan_message.status is Status.PLAN
+        assert plan_message.steps == (("1", "分析"), ("2", "实现"))
+
+        step = run_cli(
+            "step-done",
+            "--session-id",
+            "skill-1",
+            "--index",
+            "1",
+            "--message",
+            "分析完成",
+            "--pipe",
+            pipe_name,
+        )
+        assert step.returncode == 0, step.stderr + step.stdout
+        step_payload = json.loads(step.stdout)
+        assert step_payload["event"] == "step_done"
+        assert step_payload["step_index"] == "1"
+        step_message = decode_frame(q.get(timeout=3))
+        assert step_message.status is Status.STEP_COMPLETE
+        assert step_message.step_index == "1"
+        assert step_message.text == "分析完成"
 
         complete = run_cli(
             "complete",
@@ -181,6 +261,111 @@ def test_cli_register_generates_session_id() -> None:
         assert received.session_id == payload["session_id"]
     finally:
         server.stop()
+
+
+def test_cli_plan_steps_json() -> None:
+    result = run_cli(
+        "plan",
+        "--session-id",
+        "skill-1",
+        "--steps-json",
+        '{"2":"two","1":"one"}',
+        "--dry-run",
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["event"] == "plan"
+    assert payload["step_count"] == 2
+    assert payload["header_hex"].startswith("06")
+
+
+def test_cli_resume_dry_run_uses_0100() -> None:
+    result = run_cli(
+        "resume",
+        "--session-id",
+        "skill-1",
+        "--dry-run",
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["event"] == "resume"
+    assert payload["header_hex"].startswith("04")
+
+
+def test_cli_plan_requires_steps() -> None:
+    result = run_cli(
+        "plan",
+        "--session-id",
+        "skill-1",
+        "--dry-run",
+    )
+    assert result.returncode == 3
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["event"] == "argument_error"
+    assert "--step" in payload["error"]
+
+
+def test_cli_plan_rejects_invalid_index() -> None:
+    result = run_cli(
+        "plan",
+        "--session-id",
+        "skill-1",
+        "--step",
+        "0",
+        "zero",
+        "--dry-run",
+    )
+    assert result.returncode == 3
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert "step index" in payload["error"]
+
+
+def test_cli_plan_step_rejects_session_id_key() -> None:
+    result = run_cli(
+        "plan",
+        "--session-id",
+        "skill-1",
+        "--step",
+        "session_id",
+        "evil",
+        "--dry-run",
+    )
+    assert result.returncode == 3
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert "session_id" in payload["error"]
+
+
+def test_cli_plan_json_rejects_session_id_key() -> None:
+    result = run_cli(
+        "plan",
+        "--session-id",
+        "skill-1",
+        "--steps-json",
+        '{"session_id":"other","1":"one"}',
+        "--dry-run",
+    )
+    assert result.returncode == 3
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert "session_id" in payload["error"]
+
+
+def test_cli_step_done_rejects_invalid_index() -> None:
+    result = run_cli(
+        "step-done",
+        "--session-id",
+        "skill-1",
+        "--index",
+        "01",
+        "--dry-run",
+    )
+    assert result.returncode == 3
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert "step index" in payload["error"]
 
 
 def test_cli_missing_server_is_clean_error() -> None:

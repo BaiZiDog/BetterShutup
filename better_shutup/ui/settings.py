@@ -13,9 +13,10 @@ from . import theme as colors
 from .theme import Theme
 
 _DISPLAY_NAMES = {
-    "complete": "任务完成（01）",
-    "action": "需要操作（10）",
-    "error": "错误（11）",
+    "complete": "任务完成（0001）",
+    "action": "需要操作（0010）",
+    "error": "错误（0011）",
+    "notify": "消息 / 计划 / 步骤（0101 / 0110 / 0111）",
 }
 
 
@@ -61,7 +62,7 @@ class SettingsDialog:
         ).pack(anchor="w", padx=theme.px(24), pady=(theme.px(18), theme.px(3)))
         tk.Label(
             header,
-            text="三类通知使用不同音效。可保留内置合成音，也可以选择自己的 WAV 文件。",
+            text="四类提示音分别用于完成、需要操作、错误，以及消息/计划/步骤通知。可保留内置合成音，也可以选择自己的 WAV 文件。",
             font=theme.body_font,
             fg=colors.MUTED,
             bg=colors.SURFACE,

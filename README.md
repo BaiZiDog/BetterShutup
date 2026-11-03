@@ -6,12 +6,12 @@
 
 > ⚠️ **早期开发阶段，尚未经过完整测试。** 真实关机流程可能受 Windows、权限和正在运行的应用影响。首次使用请先执行 `--dry-run`，不要在无人值守或含重要任务的机器上直接启用真实关机。
 
-BetterShutup 是一个 Windows 多 Agent 协同工具：Agent 通过命名管道注册任务、汇报完成/需要操作/错误，桌面应用用置顶卡片和不同音效提醒你；当你开启“计划关机”后，所有已注册会话都完成时自动倒计时关机。
+BetterShutup 是一个 Windows 多 Agent 协同工具：Agent 通过命名管道注册任务，汇报完成/需要操作/错误/普通消息，并上报或更新执行计划与步骤进度；桌面应用用置顶卡片和不同音效提醒你，还可以在同一窗口查看某个会话的计划。当你开启“计划关机”后，所有已注册会话都完成时自动倒计时关机。
 
 - 桌面应用：Python + tkinter，运行时无第三方依赖。
 - Agent Skill：标准 `SKILL.md` + 独立 Python CLI，兼容 Claude Code、DSH、TRAE。
 - 通信：Windows 消息模式命名管道，`\\.\pipe\BetterShutup`。
-- 确认过的协议：4 字节头，低 2 位状态码 + 3 字节大端 JSON 长度。
+- 确认过的协议：4 字节头，低 4 位状态码 + 3 字节大端 JSON 长度；状态码扩展为 4 位，`1000`–`1111` 预留给后续使用。
 - 可选单文件构建：Nuitka 原生可执行文件，见“编译单文件 EXE”。
 
 ## 快速开始
@@ -63,23 +63,29 @@ python tools/install_skill.py --scope user --agents claude,dsh
 | TRAE | `.trae/skills/better-shutup` | `~/.trae/skills/better-shutup` |
 | TRAE CN | `.trae/skills/better-shutup` | `~/.trae-cn/skills/better-shutup` |
 
-安装后重启 Agent（或在 TRAE 设置中导入技能）。之后当你说“用 BetterShutup 跟踪这个任务”“注册会话并汇报完成”“协调自动关机”等，Agent 会被引导使用该 Skill。Skill 只在明确要求跟踪时注册，普通任务不会自动占用会话。
+安装后重启 Agent（或在 TRAE 设置中导入技能）。当用户要求阅读/审查文档、浏览或搜索目录、或使用本 Skill 时，Agent 默认注册会话并跟踪；也支持明确的“用 BetterShutup 跟踪这个任务”“注册会话并汇报完成”“协调自动关机”等指令。会话是否结束按**任务本身**判定，而不是按当前对话轮次；任务未完成时，不会因为一轮回答结束就发送完成。无关的普通聊天不会自动占用会话。
 
 ### 推荐工作流
 
 1. 启动 BetterShutup，确认右上角显示“监听中”。
-2. 让 Agent 使用 `better-shutup` Skill；Agent 在任务开始时注册，结束时发送完成消息。
-3. 在主窗口点“开启计划关机”。全部已注册会话完成时开始倒计时；倒计时期间若有新会话注册，本次倒计时会取消并等待新会话完成。
-4. 倒计时窗口置顶显示剩余时间，随时可点“取消计划关机”。
-5. 主窗口可移除失联会话、清除已完成会话，避免过期会话阻塞计划。
+2. 让 Agent 使用 `better-shutup` Skill。阅读/审查文档、浏览/搜索目录或使用本 Skill 时，Agent 默认在任务开始时注册会话；可随时上报计划（`0110`）和步骤完成（`0111`）。任务真正完成时才发送完成消息（`0001`），不按对话轮次结束判定。
+3. 单击主窗口中的会话行，会在同一窗口切换到该会话的“执行计划”视图；点击“返回会话”回到列表。计划更新和步骤完成会实时刷新。
+4. 在主窗口点“开启计划关机”。全部已注册会话完成时开始倒计时；倒计时期间若有新会话注册，本次倒计时会取消并等待新会话完成。
+5. 倒计时窗口置顶显示剩余时间，随时可点“取消计划关机”。
+6. 主窗口可移除失联会话、清除已完成会话，避免过期会话阻塞计划。
 
 ## 通知
 
 | 状态 | 卡片 | 音效 | 关闭方式 |
 |---|---|---|---|
-| `01` 完成任务 | 绿色“任务完成” | 上行三音 | 10 秒后自动关闭，也可手动关闭 |
-| `10` 需要操作 | 橙色“需要操作” | 双声提示 | 必须手动关闭 |
-| `11` 错误 | 红色“错误” | 低频蜂鸣 | 必须手动关闭 |
+| `0001` 完成任务 | 绿色“任务完成” | 上行三音 | 10 秒后自动关闭，也可手动关闭 |
+| `0010` 需要操作 | 橙色“需要操作” | 双声提示 | 必须手动关闭 |
+| `0011` 错误 | 红色“错误” | 低频蜂鸣 | 必须手动关闭 |
+| `0101` 普通通知 | 蓝色“消息” | 轻提示音 | 10 秒后自动关闭，也可手动关闭 |
+| `0110` 计划更新 | 蓝色“计划更新” | 轻提示音 | 10 秒后自动关闭，也可手动关闭 |
+| `0111` 步骤完成 | 蓝色“步骤完成” | 轻提示音 | 10 秒后自动关闭，也可手动关闭 |
+| `0100` 撤销需要操作 | 不弹卡片 | 无 | — |
+| `0000` 注册 / 更新名称 | 不弹卡片 | 无 | — |
 
 - 卡片位于主屏工作区右下角，置顶、不占用任务栏，可堆叠。
 - 较长内容在卡片中截断，点击“查看完整内容”可打开完整文本窗口。
@@ -91,8 +97,9 @@ python tools/install_skill.py --scope user --agents claude,dsh
 - 倒计时默认 60 秒，可在主界面设置为 5–3600 秒；仅对下一次倒计时生效。
 - 开启计划关机且没有会话时，只进入等待状态。
 - 开启计划关机时若已有会话且全部完成，立即开始倒计时。
-- 倒计时期间若有新会话注册/重新注册，本次倒计时取消，但计划保持开启；新会话完成后再倒计时。
-- 已完成会话若又发送 `10`/`11`，会被重新视为未完成并取消当前倒计时，避免在仍需操作或仍有错误时关机。
+- 倒计时期间若有新会话注册，本次倒计时取消，但计划保持开启；新会话完成后再倒计时。
+- 已完成会话若又发送 `0010`（需要操作）、`0011`（错误）、`0101`（普通通知）、`0110`（计划更新）或 `0111`（步骤完成），会被重新视为未完成并取消当前倒计时，避免在 Agent 仍在工作或仍需用户处理时关机。
+- `0100` 只撤销“需要操作”状态，不会重新打开已完成会话，也不会取消倒计时。
 - 关闭计划开关、点击倒计时窗口取消、关闭应用，都会取消倒计时。
 - 倒计时为应用内计时，不使用系统级延迟关机；退出或崩溃应用不会留下关机任务。
 - 到点后调用 `shutdown.exe /s /t 0`，不强制关闭应用（不使用 `/f`）。Windows 或应用策略可能阻止关机；如果命令失败会显示错误卡片，如果 60 秒后系统仍未关机，应用会解除“关机中”状态并提示关机可能已被取消或阻止。
@@ -101,8 +108,10 @@ python tools/install_skill.py --scope user --agents claude,dsh
 
 ## 协议
 
+> 协议版本 2：状态码扩为 4 位。桌面应用与 Agent Skill 必须一起升级；旧版 Skill 用 `0000` + `--name` 撤销“需要操作”的方式已不再生效，请改用 `0100`（新 `resume`）。
+
 ```text
-byte0:  0 0 0 0 0 0 SS      状态码：00/01/10/11，高 6 位保留为 0
+byte0:  0 0 0 0 S S S S      状态码：4 位，高 4 位保留为 0
 byte1:  L23 ... L16
 byte2:  L15 ... L8
 byte3:  L7  ... L0          L = UTF-8 JSON 正文的字节数
@@ -111,39 +120,66 @@ byte3:  L7  ... L0          L = UTF-8 JSON 正文的字节数
 - 正文为 UTF-8 JSON 对象；长度仅计算正文，不含 4 字节头；最大 `0xFFFFFF` 字节。
 - 每个管道连接只发送一帧，且必须用一次 `WriteFile` 写完头部和正文；服务端读完一帧后关闭连接。
 - 协议没有 ACK。Agent CLI 返回成功只表示帧已写入管道，不表示应用已经受理。
-- 字段：
+- 本次新增的 `0100`–`0111` 使用第三个二进制位（bit 2）；最高位（bit 3）继续保留。
+- 状态码：
+
+| 状态 | 名称 | 作用 |
+|---|---|---|
+| `0000` | 注册会话 | 新 ID 注册；已有 ID 只更新名称，不撤销“需要操作” |
+| `0001` | 完成任务 | 标记会话完成；全部完成且计划开启时开始关机倒计时 |
+| `0010` | 需要操作 | 弹出需手动关闭的橙色卡片；不完成任务 |
+| `0011` | 错误 | 弹出需手动关闭的红色卡片；不完成任务 |
+| `0100` | 撤销需要操作 | 用户已回答/已完成操作；清除“需要操作”并关闭对应卡片，无新通知 |
+| `0101` | 普通通知 | Agent 想对用户说话但无需报错；蓝色自动关闭卡片 |
+| `0110` | 更新计划 | 顶层键值对，键为步骤索引；同一索引覆盖，首次发送即创建计划 |
+| `0111` | 步骤完成 | 标记已有计划步骤完成；不会自动完成任务 |
+| `1000`–`1111` | 预留 | 当前应用会拒绝，Agent 不得使用 |
+
+- JSON 示例：
 
 ```json
 {"session_name": "Claude Code · 任务", "session_id": "abc-123"}
 {"session_id": "abc-123", "message": "任务完成"}
 {"session_id": "abc-123", "instruction": "请确认是否发布"}
 {"session_id": "abc-123", "error": "依赖安装失败"}
+{"session_id": "abc-123", "message": "用户已回答，继续执行"}
+{"session_id": "abc-123", "message": "已完成第一轮分析"}
+{"session_id": "abc-123", "1": "分析现有流程", "2": "修改实现"}
+{"session_id": "abc-123", "step_index": "1", "message": "分析完成"}
 ```
 
-状态码 `00` 有两种作用：
+状态码 `0000` 与 `0100` 的职责已经分开：
 
-- `session_id` 不存在：注册一个新会话；若倒计时正在运行，会因新工作到达而取消。
-- `session_id` 已存在：这是 Agent 在用户回答或完成操作后的确认信号，用来清除该会话的“需要操作”状态、关闭该会话尚未关闭的“需要操作”通知卡片，使界面恢复正常进行中状态。它会更新会话名称，但不会改变完成状态、不会清除错误状态，也不会取消正在运行的关机倒计时。
-- 两种 `00` 都不新增通知卡片，也不播放提示音。
+- `0000` 新 ID：注册新会话；若倒计时正在运行，会因新工作到达而取消。
+- `0000` 已有 ID：只更新名称，不撤销“需要操作”、不清除错误、不改变完成状态、不取消倒计时。
+- `0100`：用户回答或完成操作后的确认信号；清除“需要操作”状态并关闭对应卡片，不产生新卡片或音效；不清除错误、不完成任务、不取消倒计时。
+- `0101`、`0110`、`0111` 若发送给已完成的会话，会重新打开该会话并取消倒计时（视为仍在工作）。这三类也不清除“需要操作”或错误状态。
+- `0110` 的索引是 `1`–`9999` 的正整数，直接作为顶层 JSON 键；重复发送同一索引会覆盖内容，内容变化时该步骤重新变为未完成。
+- `0111` 只能标记此前 `0110` 已登记的索引；未知索引是协议错误，不会重新打开已完成会话或取消倒计时；全部步骤完成也不会自动完成任务，仍需发送 `0001`。
 
-Agent Skill 提供 `resume` 命令专门发送这种确认；普通 `register` 也可以对已有 ID 发送 `00`。
-
-完整线协议见 `skills/better-shutup/references/protocol.md`。
+完整线协议与每个状态码的建议使用场景见 `skills/better-shutup/references/protocol.md`。
 
 ## Agent CLI
 
 Skill 自带一个仅依赖 Python 标准库的独立 CLI。它不导入桌面应用代码，可单独复制使用：
 
 ```text
-python "<SKILL_DIR>/scripts/better_shutup_pipe.py" register --name "Claude Code · 重构 API"
-python "<SKILL_DIR>/scripts/better_shutup_pipe.py" resume   --session-id "<id>" --name "Claude Code · 重构 API"
-python "<SKILL_DIR>/scripts/better_shutup_pipe.py" complete --session-id "<id>" --message "测试通过"
-python "<SKILL_DIR>/scripts/better_shutup_pipe.py" action   --session-id "<id>" --instruction "请确认是否发布"
-python "<SKILL_DIR>/scripts/better_shutup_pipe.py" error    --session-id "<id>" --error "依赖安装失败"
+python "<SKILL_DIR>/scripts/better_shutup_pipe.py" register  --name "Claude Code · 重构 API"
+python "<SKILL_DIR>/scripts/better_shutup_pipe.py" complete  --session-id "<id>" --message "测试通过"
+python "<SKILL_DIR>/scripts/better_shutup_pipe.py" action    --session-id "<id>" --instruction "请确认是否发布"
+python "<SKILL_DIR>/scripts/better_shutup_pipe.py" error     --session-id "<id>" --error "依赖安装失败"
+python "<SKILL_DIR>/scripts/better_shutup_pipe.py" resume    --session-id "<id>" --message "用户已回答"
+python "<SKILL_DIR>/scripts/better_shutup_pipe.py" notify    --session-id "<id>" --message "进度更新"
+python "<SKILL_DIR>/scripts/better_shutup_pipe.py" plan      --session-id "<id>" --step 1 "分析" --step 2 "实现"
+python "<SKILL_DIR>/scripts/better_shutup_pipe.py" plan      --session-id "<id>" --steps-json '{"1":"分析","2":"实现"}'
+python "<SKILL_DIR>/scripts/better_shutup_pipe.py" step-done --session-id "<id>" --index 1 --message "分析完成"
 ```
 
 - `register` 未指定 `--session-id` 时生成 UUID，并输出 JSON 供 Agent 记录。
-- `resume` 用已有 ID 发送状态 `00`，清除“需要操作”状态；不会生成通知。
+- `resume` 发送 `0100`，只清除“需要操作”并关闭对应卡片；不会清除错误或完成任务，也不需要 `--name`。
+- `notify` 发送 `0101`，显示蓝色自动关闭卡片；适合无需用户回答的进度/说明。
+- `plan` 发送 `0110`，可重复使用 `--step 索引 内容` 或一次传入 `--steps-json`；同一索引覆盖，首次发送即创建计划。
+- `step-done` 发送 `0111`，只能标记此前 `0110` 已登记的索引；全部步骤完成也不会自动结束会话，仍需 `complete`。
 - 输出为 ASCII 安全 JSON；退出码：`0` 成功，`2` 管道不可用/写入失败，`3` 参数校验失败。
 - `--pipe` / `BETTER_SHUTUP_PIPE` 可覆盖管道名；默认 `\\.\pipe\BetterShutup`。
 - `--dry-run` 只校验并构造帧，不连接管道，用于诊断。
@@ -152,8 +188,8 @@ python "<SKILL_DIR>/scripts/better_shutup_pipe.py" error    --session-id "<id>" 
 
 默认数据目录：`%LOCALAPPDATA%\BetterShutup`
 
-- `config.json`：倒计时秒数、三个音效覆盖路径。
-- `sounds\complete.wav` / `action.wav` / `error.wav`：首次启动自动生成的内置音效。
+- `config.json`：倒计时秒数、四个音效覆盖路径。
+- `sounds\complete.wav` / `action.wav` / `error.wav` / `notify.wav`：首次启动自动生成的内置音效。
 - `better-shutup.log`：UTF-8 轮转日志。
 
 可用环境变量/参数隔离数据：
@@ -169,7 +205,7 @@ python -m better_shutup --pipe BetterShutup-Test --data-dir D:\temp\better-shutu
 ## 安全与限制
 
 - 命名管道设置了 `PIPE_REJECT_REMOTE_CLIENTS`，但本地任意进程仍可尝试发送消息，也可以建立空闲连接占用管道实例/工作线程。只在你信任的机器和 Agent 环境中使用，并且只在需要时开启计划关机。
-- `10`/`11` 通知里的指令/错误文本只用于展示，应用不会执行任何消息内容。
+- `0010`/`0011` 及其他通知里的指令、错误、消息和计划文本只用于展示，应用不会执行任何消息内容。
 - 会话必须由 Agent 主动注册；符合协议的其他工具也可以发送消息。
 - Agent 必须在任务结束时发送完成；失联会话会让应用持续等待，可在界面中移除。
 - 应用必须保持运行；退出应用会取消应用内倒计时。

@@ -65,6 +65,8 @@ class MainWindow:
         self._on_countdown_changed = on_countdown_changed
         self._countdown_seconds = countdown_seconds
         self._selected_session_id: str | None = None
+        self._agent_plan_session_id: str | None = None
+        self._agent_plan_step_texts: dict[str, str] = {}
         self._tree_map: dict[str, str] = {}
         self._sessions: tuple[Session, ...] = ()
         self._planned = False
@@ -283,7 +285,10 @@ class MainWindow:
         card = self._card(parent)
         card.pack(fill="both", expand=True, pady=(theme.px(14), 0))
 
-        header = tk.Frame(card, bg=colors.SURFACE)
+        self._sessions_view = tk.Frame(card, bg=colors.SURFACE)
+        self._sessions_view.pack(fill="both", expand=True)
+
+        header = tk.Frame(self._sessions_view, bg=colors.SURFACE)
         header.pack(fill="x", padx=theme.px(16), pady=(theme.px(12), theme.px(8)))
         self.session_title = tk.Label(
             header,
@@ -301,6 +306,13 @@ class MainWindow:
             bg=colors.SURFACE,
         )
         self.session_count.pack(side="left", padx=(theme.px(8), 0))
+        tk.Label(
+            header,
+            text="单击会话查看计划",
+            font=theme.small_font,
+            fg=colors.MUTED,
+            bg=colors.SURFACE,
+        ).pack(side="left", padx=(theme.px(10), 0))
 
         self.remove_button = ttk.Button(
             header,
@@ -317,10 +329,10 @@ class MainWindow:
         )
         self.clear_button.pack(side="right", padx=(0, theme.px(8)))
 
-        tree_wrap = tk.Frame(card, bg=colors.SURFACE)
+        tree_wrap = tk.Frame(self._sessions_view, bg=colors.SURFACE)
         tree_wrap.pack(fill="both", expand=True, padx=theme.px(12), pady=(0, theme.px(12)))
 
-        columns = ("name", "id", "state", "latest")
+        columns = ("name", "id", "state", "plan", "latest")
         self.tree = ttk.Treeview(
             tree_wrap,
             columns=columns,
@@ -331,11 +343,13 @@ class MainWindow:
         self.tree.heading("name", text="会话名称", anchor="w")
         self.tree.heading("id", text="会话 ID", anchor="w")
         self.tree.heading("state", text="状态", anchor="w")
+        self.tree.heading("plan", text="计划", anchor="center")
         self.tree.heading("latest", text="最近消息", anchor="w")
-        self.tree.column("name", width=theme.px(180), minwidth=theme.px(100), stretch=False)
-        self.tree.column("id", width=theme.px(230), minwidth=theme.px(120), stretch=False)
-        self.tree.column("state", width=theme.px(150), minwidth=theme.px(100), stretch=False)
-        self.tree.column("latest", width=theme.px(330), minwidth=theme.px(160), stretch=True)
+        self.tree.column("name", width=theme.px(170), minwidth=theme.px(100), stretch=False)
+        self.tree.column("id", width=theme.px(210), minwidth=theme.px(120), stretch=False)
+        self.tree.column("state", width=theme.px(140), minwidth=theme.px(95), stretch=False)
+        self.tree.column("plan", width=theme.px(70), minwidth=theme.px(55), stretch=False, anchor="center")
+        self.tree.column("latest", width=theme.px(300), minwidth=theme.px(160), stretch=True)
         self.tree.tag_configure("active", foreground=colors.TEXT_SOFT)
         self.tree.tag_configure("completed", foreground=colors.SUCCESS)
         self.tree.tag_configure("action", foreground=colors.WARNING)
@@ -350,6 +364,7 @@ class MainWindow:
         scrollbar.pack(side="right", fill="y")
         self.tree.pack(side="left", fill="both", expand=True)
         self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+        self.tree.bind("<ButtonRelease-1>", self._on_tree_click)
 
         self.empty_label = tk.Label(
             tree_wrap,
@@ -358,6 +373,109 @@ class MainWindow:
             fg=colors.MUTED,
             bg=colors.SURFACE,
         )
+
+        self._build_agent_plan_view(card)
+
+    def _build_agent_plan_view(self, card: tk.Misc) -> None:
+        theme = self.theme
+        self._agent_plan_view = tk.Frame(card, bg=colors.SURFACE)
+
+        header = tk.Frame(self._agent_plan_view, bg=colors.SURFACE)
+        header.pack(fill="x", padx=theme.px(16), pady=(theme.px(12), theme.px(8)))
+        ttk.Button(
+            header,
+            text="← 返回会话",
+            style="Secondary.TButton",
+            command=self._show_sessions_view,
+        ).pack(side="left")
+        self.agent_plan_title_label = tk.Label(
+            header,
+            text="执行计划",
+            font=theme.section_font,
+            fg=colors.TEXT,
+            bg=colors.SURFACE,
+        )
+        self.agent_plan_title_label.pack(side="left", padx=(theme.px(12), 0))
+        self.agent_plan_progress_label = tk.Label(
+            header,
+            text="",
+            font=theme.small_font,
+            fg=colors.MUTED,
+            bg=colors.SURFACE,
+        )
+        self.agent_plan_progress_label.pack(side="left", padx=(theme.px(10), 0))
+        self.agent_plan_session_label = tk.Label(
+            header,
+            text="",
+            font=theme.mono_small,
+            fg=colors.MUTED,
+            bg=colors.SURFACE,
+            anchor="e",
+        )
+        self.agent_plan_session_label.pack(side="right")
+
+        plan_wrap = tk.Frame(self._agent_plan_view, bg=colors.SURFACE)
+        plan_wrap.pack(
+            fill="both",
+            expand=True,
+            padx=theme.px(12),
+            pady=(0, theme.px(8)),
+        )
+
+        columns = ("index", "step", "state")
+        self.agent_plan_tree = ttk.Treeview(
+            plan_wrap,
+            columns=columns,
+            show="headings",
+            selectmode="browse",
+            height=8,
+        )
+        self.agent_plan_tree.heading("index", text="索引", anchor="center")
+        self.agent_plan_tree.heading("step", text="步骤内容", anchor="w")
+        self.agent_plan_tree.heading("state", text="状态", anchor="w")
+        self.agent_plan_tree.column(
+            "index", width=theme.px(70), minwidth=theme.px(55), stretch=False, anchor="center"
+        )
+        self.agent_plan_tree.column(
+            "step", width=theme.px(660), minwidth=theme.px(240), stretch=True
+        )
+        self.agent_plan_tree.column(
+            "state", width=theme.px(100), minwidth=theme.px(80), stretch=False
+        )
+        self.agent_plan_tree.tag_configure("completed", foreground=colors.SUCCESS)
+        self.agent_plan_tree.tag_configure("pending", foreground=colors.TEXT_SOFT)
+        plan_scrollbar = ttk.Scrollbar(
+            plan_wrap,
+            orient="vertical",
+            command=self.agent_plan_tree.yview,
+            style="Vertical.TScrollbar",
+        )
+        self.agent_plan_tree.configure(yscrollcommand=plan_scrollbar.set)
+        plan_scrollbar.pack(side="right", fill="y")
+        self.agent_plan_tree.pack(side="left", fill="both", expand=True)
+        self.agent_plan_tree.bind("<<TreeviewSelect>>", self._on_agent_plan_select)
+
+        self.agent_plan_empty_label = tk.Label(
+            plan_wrap,
+            text="该会话尚未上报计划。Agent 可通过 0110 上报或更新计划。",
+            font=theme.body_font,
+            fg=colors.MUTED,
+            bg=colors.SURFACE,
+        )
+
+        self.agent_plan_detail = tk.Label(
+            self._agent_plan_view,
+            text="选择步骤可查看完整内容。",
+            font=theme.small_font,
+            fg=colors.TEXT_SOFT,
+            bg=colors.SURFACE_ALT,
+            anchor="w",
+            justify="left",
+            wraplength=theme.px(820),
+            padx=theme.px(10),
+            pady=theme.px(7),
+        )
+        self.agent_plan_detail.pack(fill="x", padx=theme.px(12), pady=(0, theme.px(12)))
 
     def _build_log_card(self, parent: tk.Misc) -> None:
         theme = self.theme
@@ -441,6 +559,77 @@ class MainWindow:
         )
         self._update_session_buttons()
 
+    def _on_tree_click(self, event) -> None:
+        iid = self.tree.identify_row(event.y)
+        if not iid:
+            return
+        session_id = self._tree_map.get(iid)
+        if session_id:
+            self._show_agent_plan_view(session_id)
+
+    def _show_agent_plan_view(self, session_id: str) -> None:
+        session = next(
+            (item for item in self._sessions if item.session_id == session_id),
+            None,
+        )
+        if session is None:
+            return
+        self._selected_session_id = session_id
+        self._agent_plan_session_id = session_id
+        self._sessions_view.pack_forget()
+        self._agent_plan_view.pack(fill="both", expand=True)
+        self._render_agent_plan_content(session)
+        self._update_session_buttons()
+
+    def _show_sessions_view(self) -> None:
+        self._agent_plan_session_id = None
+        self._agent_plan_view.pack_forget()
+        self._sessions_view.pack(fill="both", expand=True)
+        self._update_session_buttons()
+
+    def _render_agent_plan_content(self, session: Session) -> None:
+        completed, total = session.plan_progress
+        self.agent_plan_title_label.configure(
+            text=f"执行计划 · {_single_line(session.name, 40)}"
+        )
+        self.agent_plan_session_label.configure(
+            text=_single_line(session.session_id, 44)
+        )
+        self.agent_plan_progress_label.configure(
+            text=f"{completed}/{total} 已完成" if total else "尚未上报计划"
+        )
+        for item in self.agent_plan_tree.get_children():
+            self.agent_plan_tree.delete(item)
+        self._agent_plan_step_texts.clear()
+        for step in session.plan_steps:
+            iid = f"plan-step-{step.index}"
+            self._agent_plan_step_texts[iid] = step.text
+            self.agent_plan_tree.insert(
+                "",
+                "end",
+                iid=iid,
+                values=(
+                    step.index,
+                    _single_line(step.text, 180),
+                    "已完成" if step.completed else "待完成",
+                ),
+                tags=("completed" if step.completed else "pending",),
+            )
+        if session.plan_steps:
+            self.agent_plan_empty_label.place_forget()
+            self.agent_plan_detail.configure(text="选择步骤可查看完整内容。")
+        else:
+            self.agent_plan_empty_label.place(relx=0.5, rely=0.55, anchor="center")
+            self.agent_plan_detail.configure(text="")
+
+    def _on_agent_plan_select(self, _event=None) -> None:
+        selection = self.agent_plan_tree.selection()
+        if not selection:
+            self.agent_plan_detail.configure(text="选择步骤可查看完整内容。")
+            return
+        text = self._agent_plan_step_texts.get(selection[0], "")
+        self.agent_plan_detail.configure(text=text or "（空步骤）")
+
     def _remove_selected(self) -> None:
         if self._selected_session_id:
             self._on_remove_selected(self._selected_session_id)
@@ -482,15 +671,19 @@ class MainWindow:
             if session.completed:
                 status_text = "已完成"
                 tag = "completed"
-            elif session.last_event is Status.ACTION:
+            elif session.action_needed:
                 status_text = "进行中 · 需操作"
                 tag = "action"
-            elif session.last_event is Status.ERROR:
+            elif session.has_error:
                 status_text = "进行中 · 错误"
                 tag = "error"
             else:
                 status_text = "进行中"
                 tag = "active"
+            completed_steps, total_steps = session.plan_progress
+            plan_text = (
+                f"{completed_steps}/{total_steps}" if total_steps else "—"
+            )
             latest = _single_line(session.last_text, 100)
             if not latest:
                 latest = {
@@ -498,6 +691,10 @@ class MainWindow:
                     Status.COMPLETE: "任务完成",
                     Status.ACTION: "需要操作",
                     Status.ERROR: "报告错误",
+                    Status.RESUME: "已确认用户操作",
+                    Status.NOTIFY: "消息",
+                    Status.PLAN: "计划已更新",
+                    Status.STEP_COMPLETE: "步骤完成",
                 }.get(session.last_event, "—")
             self.tree.insert(
                 "",
@@ -507,6 +704,7 @@ class MainWindow:
                     _single_line(session.name, 40),
                     _single_line(session.session_id, 36),
                     status_text,
+                    plan_text,
                     latest,
                 ),
                 tags=(tag,),
@@ -539,6 +737,19 @@ class MainWindow:
                 self.tree.selection_remove(self.tree.selection())
         if sessions and previous_yview:
             self.tree.yview_moveto(previous_yview[0])
+        if self._agent_plan_session_id is not None:
+            plan_session = next(
+                (
+                    session
+                    for session in sessions
+                    if session.session_id == self._agent_plan_session_id
+                ),
+                None,
+            )
+            if plan_session is None:
+                self._show_sessions_view()
+            else:
+                self._render_agent_plan_content(plan_session)
         self._update_session_buttons()
 
     def render_plan(

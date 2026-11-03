@@ -90,6 +90,42 @@ def test_sequential_messages_use_separate_connections(server_factory) -> None:
     assert second.status is Status.COMPLETE
 
 
+def test_extended_status_roundtrip(server_factory) -> None:
+    name = unique_pipe()
+    q: queue.Queue[bytes] = queue.Queue()
+    server_factory(name, q)
+
+    send_message(
+        name,
+        Status.RESUME,
+        {"session_id": "s1", "message": "user replied"},
+    )
+    send_message(
+        name,
+        Status.NOTIFY,
+        {"session_id": "s1", "message": "progress"},
+    )
+    send_message(
+        name,
+        Status.PLAN,
+        {"session_id": "s1", "2": "two", "1": "one"},
+    )
+    send_message(
+        name,
+        Status.STEP_COMPLETE,
+        {"session_id": "s1", "step_index": "1", "message": "done"},
+    )
+    received = [decode_frame(q.get(timeout=3)) for _ in range(4)]
+    assert [message.status for message in received] == [
+        Status.RESUME,
+        Status.NOTIFY,
+        Status.PLAN,
+        Status.STEP_COMPLETE,
+    ]
+    assert received[2].steps == (("1", "one"), ("2", "two"))
+    assert received[3].step_index == "1"
+
+
 def test_large_message_over_64k(server_factory) -> None:
     name = unique_pipe()
     q: queue.Queue[bytes] = queue.Queue()

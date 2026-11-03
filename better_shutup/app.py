@@ -395,11 +395,15 @@ class BetterShutupApp:
                     NoticeKind.COMPLETE: "完成消息",
                     NoticeKind.ACTION: "操作指令",
                     NoticeKind.ERROR: "错误信息",
+                    NoticeKind.NOTIFY: "消息",
+                    NoticeKind.PLAN: "计划更新",
+                    NoticeKind.STEP_COMPLETE: "步骤完成",
                 }.get(notice.kind, "消息")
                 level = {
                     NoticeKind.COMPLETE: "success",
                     NoticeKind.ACTION: "warning",
                     NoticeKind.ERROR: "error",
+                    NoticeKind.STEP_COMPLETE: "success",
                 }.get(notice.kind, "info")
                 self._log(level, f"{prefix}：{_limit(notice.text)}")
             try:

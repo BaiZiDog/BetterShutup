@@ -21,6 +21,7 @@ SOUND_FILENAMES = {
     "complete": "complete.wav",
     "action": "action.wav",
     "error": "error.wav",
+    "notify": "notify.wav",
 }
 
 
@@ -110,6 +111,23 @@ def _render_action() -> list[float]:
     return _normalize(samples)
 
 
+def _render_notify() -> list[float]:
+    samples: list[float] = []
+    for frequency, duration in ((659.25, 0.16), (880.0, 0.22)):
+        samples.extend(
+            _tone(
+                frequency,
+                duration,
+                amplitude=0.30,
+                partials=(1.0, 0.12, 0.04),
+                attack=0.012,
+                release=0.090,
+            )
+        )
+        samples.extend(_silence(0.035))
+    return _normalize(samples, peak=0.78)
+
+
 def _render_error() -> list[float]:
     samples: list[float] = []
     for frequency in (220.0, 164.81):
@@ -131,6 +149,7 @@ _RENDERERS = {
     "complete": _render_complete,
     "action": _render_action,
     "error": _render_error,
+    "notify": _render_notify,
 }
 
 

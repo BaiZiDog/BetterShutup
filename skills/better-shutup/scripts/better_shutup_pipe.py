@@ -7,10 +7,14 @@ named pipes in message mode and implements the wire format documented in
 ``references/protocol.md``.
 
 Commands:
-    register   register a session, generating a session id if omitted
-    complete   report that the session's task is complete
-    action     report that user attention is required
-    error      report a task error
+    register    register a session, generating a session id if omitted
+    complete    report that the session's task is complete
+    action      report that user attention is required
+    error       report a task error
+    resume      acknowledge that the user answered/completed an action
+    notify      send an informational message to the user
+    plan        create or update plan steps
+    step-done   mark one plan step as complete
 
 Every command opens one short-lived pipe connection and writes exactly one
 complete frame.  BetterShutup does not send an acknowledgement, so success
@@ -35,23 +39,35 @@ HEADER_SIZE = 4
 MAX_BODY_SIZE = 0xFFFFFF
 MAX_SESSION_ID_LENGTH = 128
 MAX_SESSION_NAME_LENGTH = 256
+MAX_PLAN_INDEX = 9999
+MAX_PLAN_STEPS_PER_MESSAGE = 200
+MAX_PLAN_STEP_TEXT_LENGTH = 2000
 
-STATUS_REGISTER = 0b00
-STATUS_COMPLETE = 0b01
-STATUS_ACTION = 0b10
-STATUS_ERROR = 0b11
+STATUS_REGISTER = 0b0000
+STATUS_COMPLETE = 0b0001
+STATUS_ACTION = 0b0010
+STATUS_ERROR = 0b0011
+STATUS_RESUME = 0b0100
+STATUS_NOTIFY = 0b0101
+STATUS_PLAN = 0b0110
+STATUS_STEP_COMPLETE = 0b0111
 
 STATUS_NAMES = {
     STATUS_REGISTER: "register",
     STATUS_COMPLETE: "complete",
     STATUS_ACTION: "action",
     STATUS_ERROR: "error",
+    STATUS_RESUME: "resume",
+    STATUS_NOTIFY: "notify",
+    STATUS_PLAN: "plan",
+    STATUS_STEP_COMPLETE: "step_done",
 }
 
 TEXT_FIELDS = {
     STATUS_COMPLETE: "message",
     STATUS_ACTION: "instruction",
     STATUS_ERROR: "error",
+    STATUS_NOTIFY: "message",
 }
 
 GENERIC_WRITE = 0x40000000
@@ -158,7 +174,7 @@ def _validate_session_name(value: str) -> str:
     return value
 
 
-def _validate_text(value: str, field_name: str) -> str:
+def _validate_text(value: Any, field_name: str) -> str:
     if not isinstance(value, str):
         raise ValidationError(f"{field_name} must be a string")
     if "\x00" in value:
@@ -168,6 +184,45 @@ def _validate_text(value: str, field_name: str) -> str:
             f"{field_name} must not contain lone Unicode surrogates"
         )
     return value
+
+
+def _validate_step_index(value: Any) -> str:
+    if not isinstance(value, str):
+        raise ValidationError("step index must be a string")
+    if not value or not all("0" <= char <= "9" for char in value):
+        raise ValidationError(
+            f"step index must be a positive integer string (1-{MAX_PLAN_INDEX})"
+        )
+    if len(value) > len(str(MAX_PLAN_INDEX)):
+        raise ValidationError(
+            f"step index must be between 1 and {MAX_PLAN_INDEX}"
+        )
+    if value != str(int(value)):
+        raise ValidationError("step index must not have leading zeros")
+    number = int(value)
+    if number < 1 or number > MAX_PLAN_INDEX:
+        raise ValidationError(
+            f"step index must be between 1 and {MAX_PLAN_INDEX}"
+        )
+    return value
+
+
+def _validate_step_text(value: Any, index: str) -> str:
+    text = _validate_text(value, f"plan step {index}")
+    if not text.strip():
+        raise ValidationError(f"plan step {index} must not be empty")
+    if len(text) > MAX_PLAN_STEP_TEXT_LENGTH:
+        raise ValidationError(
+            f"plan step {index} must be at most "
+            f"{MAX_PLAN_STEP_TEXT_LENGTH} characters"
+        )
+    return text
+
+
+def _optional_text(fields: Mapping[str, Any], field_name: str) -> str:
+    if field_name not in fields:
+        return ""
+    return _validate_text(fields[field_name], field_name)
 
 
 def build_frame(status: int, fields: Mapping[str, Any]) -> bytes:
@@ -181,10 +236,48 @@ def build_frame(status: int, fields: Mapping[str, Any]) -> bytes:
     if status == STATUS_REGISTER:
         if "session_name" not in fields or "session_id" not in fields:
             raise ValidationError("register requires session_name and session_id")
-        payload = {
+        payload: dict[str, Any] = {
             "session_name": _validate_session_name(fields["session_name"]),
             "session_id": _validate_session_id(fields["session_id"]),
         }
+    elif status == STATUS_PLAN:
+        if "session_id" not in fields:
+            raise ValidationError("plan requires session_id")
+        session_id = _validate_session_id(fields["session_id"])
+        step_payload: dict[str, str] = {}
+        for raw_index, raw_text in fields.items():
+            if raw_index == "session_id":
+                continue
+            index = _validate_step_index(raw_index)
+            step_payload[index] = _validate_step_text(raw_text, index)
+        if not step_payload:
+            raise ValidationError("plan requires at least one step")
+        if len(step_payload) > MAX_PLAN_STEPS_PER_MESSAGE:
+            raise ValidationError(
+                f"plan may contain at most {MAX_PLAN_STEPS_PER_MESSAGE} steps"
+            )
+        payload = {"session_id": session_id}
+        for index in sorted(step_payload, key=int):
+            payload[index] = step_payload[index]
+    elif status == STATUS_STEP_COMPLETE:
+        if "session_id" not in fields:
+            raise ValidationError("step-done requires session_id")
+        if "step_index" not in fields:
+            raise ValidationError("step-done requires step_index")
+        payload = {
+            "session_id": _validate_session_id(fields["session_id"]),
+            "step_index": _validate_step_index(fields["step_index"]),
+        }
+        text = _optional_text(fields, "message")
+        if text:
+            payload["message"] = text
+    elif status == STATUS_RESUME:
+        if "session_id" not in fields:
+            raise ValidationError("resume requires session_id")
+        payload = {"session_id": _validate_session_id(fields["session_id"])}
+        text = _optional_text(fields, "message")
+        if text:
+            payload["message"] = text
     else:
         if "session_id" not in fields:
             raise ValidationError("session_id is required")
@@ -342,7 +435,7 @@ def _build_parser() -> argparse.ArgumentParser:
     register = sub.add_parser(
         "register",
         parents=[common],
-        help="Register a session (00)",
+        help="Register a session (0000)",
     )
     register.add_argument("--name", required=True, help="Human-readable session name")
     register.add_argument(
@@ -351,22 +444,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Stable session id; generated if omitted",
     )
 
-    resume = sub.add_parser(
-        "resume",
-        parents=[common],
-        help="Clear an existing session's action-needed state (00)",
-    )
-    resume.add_argument("--session-id", required=True)
-    resume.add_argument(
-        "--name",
-        required=True,
-        help="Session name to keep/update",
-    )
-
     complete = sub.add_parser(
         "complete",
         parents=[common],
-        help="Report task completion (01)",
+        help="Report task completion (0001)",
     )
     complete.add_argument("--session-id", required=True)
     complete.add_argument("--message", required=True)
@@ -374,7 +455,7 @@ def _build_parser() -> argparse.ArgumentParser:
     action = sub.add_parser(
         "action",
         parents=[common],
-        help="Report that user action is required (10)",
+        help="Report that user action is required (0010)",
     )
     action.add_argument("--session-id", required=True)
     action.add_argument("--instruction", required=True)
@@ -382,12 +463,95 @@ def _build_parser() -> argparse.ArgumentParser:
     error = sub.add_parser(
         "error",
         parents=[common],
-        help="Report an error (11)",
+        help="Report an error (0011)",
     )
     error.add_argument("--session-id", required=True)
     error.add_argument("--error", required=True)
 
+    resume = sub.add_parser(
+        "resume",
+        parents=[common],
+        help="Acknowledge that the user responded to an action request (0100)",
+    )
+    resume.add_argument("--session-id", required=True)
+    resume.add_argument(
+        "--message",
+        default="",
+        help="Optional acknowledgement note for the event log",
+    )
+
+    notify = sub.add_parser(
+        "notify",
+        parents=[common],
+        help="Send an informational message that needs no action (0101)",
+    )
+    notify.add_argument("--session-id", required=True)
+    notify.add_argument("--message", required=True)
+
+    plan = sub.add_parser(
+        "plan",
+        parents=[common],
+        help="Create or update plan steps (0110)",
+    )
+    plan.add_argument("--session-id", required=True)
+    plan_steps = plan.add_mutually_exclusive_group(required=True)
+    plan_steps.add_argument(
+        "--steps-json",
+        help=(
+            'JSON object mapping 1-based index to text, for example '
+            '\'{"1":"Analyze code","2":"Implement"}\''
+        ),
+    )
+    plan_steps.add_argument(
+        "--step",
+        action="append",
+        nargs=2,
+        metavar=("INDEX", "TEXT"),
+        help="Repeatable index/text pair; later duplicates overwrite earlier ones",
+    )
+
+    step_done = sub.add_parser(
+        "step-done",
+        parents=[common],
+        help="Mark one existing plan step as complete (0111)",
+    )
+    step_done.add_argument("--session-id", required=True)
+    step_done.add_argument(
+        "--index",
+        required=True,
+        help=f"Plan step index, 1-{MAX_PLAN_INDEX}",
+    )
+    step_done.add_argument(
+        "--message",
+        default="",
+        help="Optional completion note for the event log",
+    )
+
     return parser
+
+
+def _plan_fields(args: argparse.Namespace) -> dict[str, Any]:
+    fields: dict[str, Any] = {"session_id": args.session_id}
+    if args.steps_json is not None:
+        try:
+            steps = json.loads(args.steps_json)
+        except json.JSONDecodeError as exc:
+            raise ValidationError(f"--steps-json is not valid JSON: {exc.msg}") from exc
+        if not isinstance(steps, dict):
+            raise ValidationError("--steps-json must be a JSON object")
+        if "session_id" in steps:
+            raise ValidationError(
+                "--steps-json must not contain session_id; use --session-id"
+            )
+        fields.update(steps)
+        return fields
+    for index, text in args.step or []:
+        if index == "session_id":
+            raise ValidationError(
+                "step index must not be 'session_id'; use --session-id"
+            )
+        fields[index] = text
+    return fields
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -396,42 +560,69 @@ def main(argv: list[str] | None = None) -> int:
     command = args.command
 
     session_id = getattr(args, "session_id", None)
+    step_index: str | None = None
     if command == "register":
         if session_id is None:
             session_id = uuid.uuid4().hex
         status = STATUS_REGISTER
         fields = {"session_name": args.name, "session_id": session_id}
-        event = "register"
-    elif command == "resume":
-        status = STATUS_REGISTER
-        fields = {"session_name": args.name, "session_id": session_id}
-        event = "resume"
     elif command == "complete":
         status = STATUS_COMPLETE
         fields = {"session_id": session_id, "message": args.message}
-        event = "complete"
     elif command == "action":
         status = STATUS_ACTION
         fields = {"session_id": session_id, "instruction": args.instruction}
-        event = "action"
-    else:
+    elif command == "error":
         status = STATUS_ERROR
         fields = {"session_id": session_id, "error": args.error}
-        event = "error"
+    elif command == "resume":
+        status = STATUS_RESUME
+        fields = {"session_id": session_id, "message": args.message}
+    elif command == "notify":
+        status = STATUS_NOTIFY
+        fields = {"session_id": session_id, "message": args.message}
+    elif command == "plan":
+        status = STATUS_PLAN
+        try:
+            fields = _plan_fields(args)
+        except ValidationError as exc:
+            _emit(
+                {
+                    "ok": False,
+                    "event": STATUS_NAMES[STATUS_PLAN],
+                    "session_id": session_id,
+                    "error": str(exc),
+                }
+            )
+            return exc.exit_code
+    else:
+        status = STATUS_STEP_COMPLETE
+        fields = {
+            "session_id": session_id,
+            "step_index": args.index,
+            "message": args.message,
+        }
+    event = STATUS_NAMES[status]
+    if status == STATUS_STEP_COMPLETE:
+        step_index = args.index
+
     try:
         frame = build_frame(status, fields)
         if args.dry_run:
-            _emit(
-                {
-                    "ok": True,
-                    "dry_run": True,
-                    "event": event,
-                    "session_id": session_id,
-                    "pipe": pipe_name,
-                    "frame_length": len(frame),
-                    "header_hex": frame[:HEADER_SIZE].hex(),
-                }
-            )
+            result = {
+                "ok": True,
+                "dry_run": True,
+                "event": event,
+                "session_id": session_id,
+                "pipe": pipe_name,
+                "frame_length": len(frame),
+                "header_hex": frame[:HEADER_SIZE].hex(),
+            }
+            if step_index is not None:
+                result["step_index"] = step_index
+            if status == STATUS_PLAN:
+                result["step_count"] = len(fields) - 1
+            _emit(result)
             return 0
         send_frame(pipe_name, frame, timeout_ms=args.timeout_ms)
     except ValidationError as exc:
@@ -467,15 +658,18 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    _emit(
-        {
-            "ok": True,
-            "event": event,
-            "session_id": session_id,
-            "pipe": pipe_name,
-            "bytes_written": len(frame),
-        }
-    )
+    result = {
+        "ok": True,
+        "event": event,
+        "session_id": session_id,
+        "pipe": pipe_name,
+        "bytes_written": len(frame),
+    }
+    if step_index is not None:
+        result["step_index"] = step_index
+    if status == STATUS_PLAN:
+        result["step_count"] = len(fields) - 1
+    _emit(result)
     return 0
 
 

@@ -65,21 +65,31 @@ and run the relevant pytest modules before committing.
 `better_shutup/protocol.py` owns the 4-byte header and JSON validation:
 
 ```text
-byte0:  0 0 0 0 0 0 SS    status: 00 register, 01 complete, 10 action, 11 error
+byte0:  0 0 0 0 S S S S    status: 4 bits; upper four bits reserved as 0
 byte1-3: 24-bit big-endian length of the UTF-8 JSON body
 ```
 
-Status values are binary (`10` is decimal 2). Each connection carries exactly
-one frame, written in one `WriteFile`; the server closes after reading it. The
-body maximum is 16 MiB − 1. The reserved six bits in byte 0 must be zero.
-There is no acknowledgement channel.
+Statuses are `0000` register, `0001` complete, `0010` action, `0011` error,
+`0100` resume, `0101` notify, `0110` plan, and `0111` step complete. Codes
+`1000`–`1111` are reserved and rejected. Each connection carries exactly one
+frame, written in one `WriteFile`; the server closes after reading it. The body
+maximum is 16 MiB − 1. There is no acknowledgement channel.
 
-Status `00` is dual-purpose and never emits a notification: a new session ID
-registers a session; an existing ID is an acknowledgement that the user
-answered/performed the requested operation. It updates the name, clears only
-the action-needed state, and dismisses that session's outstanding action card.
-It must not reopen a completed session, clear an error state, or cancel an
-already-running countdown.
+Status `0000` never emits a notification and only registers a session or
+updates its display name. An existing ID must not clear action-needed, clear an
+error, reopen a completed session, or cancel a countdown. Status `0100` is the
+dedicated user-response acknowledgement: it clears only action-needed and
+dismisses that session's action card, with no new card or sound; it preserves
+errors, completion, and any running countdown.
+
+Statuses `0101`, `0110`, and `0111` are informational progress signals but
+count as new work: if the session was already complete they reopen it and
+cancel a running countdown. Status `0110` uses a flat JSON object whose
+`session_id` key is reserved and whose other keys are 1-based plan indices
+(`1`–`9999`, canonical decimal strings); values are non-empty step text. It
+upserts steps, and changing an existing step's text resets that step to
+incomplete. Status `0111` requires an existing step index and never completes
+the task automatically.
 
 Keep `protocol.py`, the standalone Skill CLI's framing, and
 `skills/better-shutup/references/protocol.md` in sync. The parity tests in
@@ -102,13 +112,25 @@ Keep `protocol.py`, the standalone Skill CLI's framing, and
 
 `better_shutup/core.py` is pure, injectable-clock logic. Important rules:
 
-- Status `00` never emits notifications. A new ID registers and cancels a
-  running countdown as new work; an existing ID only clears the action-needed
-  state (and dismisses that session's action card) while keeping
-  completion/error/countdown untouched.
-- A task is complete only after status `01`; `10`/`11` are notifications and do
-  not complete a session. If a previously completed session later sends `10`
-  or `11`, it is reopened and any running countdown is cancelled.
+- Status `0000` never emits notifications. A new ID registers and cancels a
+  running countdown as new work; an existing ID only updates the display name.
+- Status `0100` clears only action-needed and requests dismissal of that
+  session's action card. It does not clear an error, complete the session,
+  reopen a completed session, or cancel a countdown.
+- A task is complete only after status `0001`; `0010`, `0011`, `0101`, `0110`,
+  and `0111` do not complete a session. If a previously completed session later
+  sends any of those five statuses, it is reopened and any running countdown is
+  cancelled. This is a deliberate user decision: informational messages and
+  plan progress also mean the agent is still working.
+- `Session` tracks `completed`, `action_needed`, `has_error`, `last_event`,
+  `last_text`, and a `plan` mapping of index to `PlanStep`. The UI must use the
+  boolean flags for state rendering, not `last_event`, because `0101`/`0110`/
+  `0111` update `last_event` without clearing attention/error state.
+- `0110` plan steps are upserted. New indices are added; existing indices with
+  changed text are reset to incomplete; identical text preserves completion.
+  `0111` requires the index to exist and only marks that step complete. An
+  unknown-index `0111` is a protocol error and leaves session state and any
+  countdown untouched; it does not reopen a completed session.
 - A countdown starts only when the plan is armed, at least one session exists,
   and all registered sessions are complete. Removing completed sessions does
   not cancel an already-running countdown.
@@ -118,11 +140,18 @@ Keep `protocol.py`, the standalone Skill CLI's framing, and
 
 ### UI and sound
 
-- `ui/main_window.py`: plan/session/log UI and state rendering.
+- `ui/main_window.py`: shutdown card, session table, event log, and an
+  in-window plan view. Single-clicking a session row switches the sessions card
+  to that session's plan view; a “返回会话” button returns to the list. The
+  session table has a plan-progress column and uses `action_needed`/`has_error`
+  flags for coloring.
 - `ui/notifications.py`: borderless topmost cards, bottom-right stacking,
-  completion auto-dismiss, long-text detail window.
+  completion/message/plan/step auto-dismiss, long-text detail window. Notify,
+  plan, and step-complete cards use the blue primary color and the `notify`
+  sound; action and error cards remain manual-close.
 - `ui/countdown.py`: topmost countdown/cancel window.
-- `ui/settings.py`: independent WAV overrides and preview.
+- `ui/settings.py`: independent WAV overrides and preview for the four sound
+  kinds (`complete`, `action`, `error`, `notify`).
 - `ui/theme.py`: DPI scaling, fonts, colors, ttk styles.
 - `sounds.py`: deterministic built-in WAV generation plus a serialized playback
   worker. Do not play sounds synchronously on the Tk thread.
@@ -151,7 +180,13 @@ Keep `protocol.py`, the standalone Skill CLI's framing, and
 - Skill hosts resolve skill scripts relative to the skill directory; never
   assume the current working directory. Claude Code may use
   `${CLAUDE_SKILL_DIR}`, while DSH/TRAE must use the actual skill directory.
+- The Agent Skill defaults to tracking tasks where the user asks to read/review
+  documentation, browse/search a directory, or use the skill itself. Session
+  completion is task-based, not conversation-based: `complete` means the task
+  is finished, not that a conversational turn ended.
 - The public repository is maintained as `BaiZiDog/BetterShutup` under the
   GNU General Public License v3.0, GPL-3.0-only (`LICENSE`, `NOTICE`).
+
+没有我的要求先不提交仓库
 
 无论何时都使用better_shutup管理会话，我说类似“完成任务后关机也都自动等价为使用better_shutup的功能

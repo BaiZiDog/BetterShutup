@@ -16,7 +16,7 @@ from .core import (
 )
 
 CONFIG_VERSION = 1
-SOUND_KINDS = ("complete", "action", "error")
+SOUND_KINDS = ("complete", "action", "error", "notify")
 
 
 def app_data_dir() -> Path:
