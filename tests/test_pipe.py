@@ -115,15 +115,26 @@ def test_extended_status_roundtrip(server_factory) -> None:
         Status.STEP_COMPLETE,
         {"session_id": "s1", "step_index": "1", "message": "done"},
     )
-    received = [decode_frame(q.get(timeout=3)) for _ in range(4)]
+    send_message(
+        name,
+        Status.FILE_DOWNLOAD,
+        {
+            "session_id": "s1",
+            "url": "https://example.com/file.bin",
+            "path": r"C:\temp\file.bin",
+        },
+    )
+    received = [decode_frame(q.get(timeout=3)) for _ in range(5)]
     assert [message.status for message in received] == [
         Status.RESUME,
         Status.NOTIFY,
         Status.PLAN,
         Status.STEP_COMPLETE,
+        Status.FILE_DOWNLOAD,
     ]
     assert received[2].steps == (("1", "one"), ("2", "two"))
     assert received[3].step_index == "1"
+    assert received[4].url == "https://example.com/file.bin"
 
 
 def test_large_message_over_64k(server_factory) -> None:

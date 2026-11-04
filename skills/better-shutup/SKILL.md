@@ -1,6 +1,6 @@
 ---
 name: better-shutup
-description: Connect an agent task to the local BetterShutup desktop monitor over its Windows named pipe. Register a session, report completion, action-needed, errors, informational messages, plan steps, and step completion so the user sees topmost notifications and coordinated shutdown can wait for all sessions. Use by default when the user asks to read/review documentation, browse or search a directory, or use this skill, and treat completion as task-based rather than tied to the conversation. The agent may start the app but must never close it. Also use when the user asks to track work with BetterShutup, coordinate automatic shutdown, register a session, report progress/needs-action/error/plan steps to BetterShutup, or mentions BetterShutup, 自动关机协调, 关机协同, 注册会话 or 汇报任务完成.
+description: Connect an agent task to the local BetterShutup desktop monitor over its Windows named pipe. Register a session, report completion, action-needed, errors, informational messages, plan steps, and step completion, or request a background file download to an absolute local path so the user sees topmost notifications and coordinated shutdown can wait for all sessions. Use by default when the user asks to read/review documentation, browse or search a directory, or use this skill, and treat completion as task-based rather than tied to the conversation. The agent may start the app but must never close it. Also use when the user asks to track work with BetterShutup, coordinate automatic shutdown, register a session, report progress/needs-action/error/plan steps to BetterShutup, or mentions BetterShutup, 自动关机协调, 关机协同, 注册会话 or 汇报任务完成.
 ---
 
 # BetterShutup session reporting
@@ -116,7 +116,37 @@ Always quote the script path.
    registered by an earlier `0110`; an unknown index is a protocol error and
    does not reopen a completed session or cancel a countdown.
 
-4. If you are blocked and need a human decision, send `action` instead of
+   **Update the status immediately after each step is actually completed.**
+   Do not wait until the end of the task or batch all `step-done` messages in
+   the final response; the UI and the user need the progress as it happens.
+
+4. If you need a file downloaded, send `download`:
+
+   ```text
+   python "<SKILL_DIR>/scripts/better_shutup_pipe.py" download --session-id "7f3ac2..." --url "https://example.com/archive.zip" --path "C:\Users\me\Downloads\archive.zip"
+   ```
+
+   `path` must be absolute and its last segment is the file name. The app
+   creates parent directories, downloads with adaptive multi-threaded range
+   requests (falling back to a single stream when necessary), and runs multiple
+   downloads in parallel. You cannot set the thread count.
+
+   The app never sends a result back. The CLI exits after writing the frame.
+   Poll the destination yourself:
+
+   - success: the target file appears atomically with the full content;
+   - failure: the target stays unchanged/absent and `err.err` is appended in
+     the target directory with timestamp, URL, path, bytes, and error.
+
+   Remove stale target/`err.err` files before sending if you need an
+   unambiguous result. Do not send `complete` until you have observed the
+   target or `err.err`. The start is logged only; success shows a blue
+   auto-close card, failure a red manual-close card.
+
+   Add `--quiet` with an explicit `--session-id` if you do not want the CLI's
+   local success JSON. Errors still print JSON.
+
+5. If you are blocked and need a human decision, send `action` instead of
    completing. Put the exact decision needed in `--instruction`:
 
    ```text
@@ -135,7 +165,7 @@ Always quote the script path.
    notification card or sound. It does not clear an error or complete the task.
    Continue the task; send `complete` only when the work is actually finished.
 
-5. If you merely want to tell the user something and do not need an answer or
+6. If you merely want to tell the user something and do not need an answer or
    an operation, send `notify`:
 
    ```text
@@ -148,7 +178,7 @@ Always quote the script path.
 
    Agent-facing rule: **在需要对用户说话但无需使用报错时使用**。
 
-6. If the task fails or encounters a blocking error, send `error`:
+7. If the task fails or encounters a blocking error, send `error`:
 
    ```text
    python "<SKILL_DIR>/scripts/better_shutup_pipe.py" error --session-id "7f3ac2..." --error "依赖安装失败：无法访问内部包仓库。"
@@ -157,7 +187,7 @@ Always quote the script path.
    `resume` does not clear a reported error. After fixing or explaining it,
    continue and send `complete` when the whole task is done.
 
-7. Report task completion immediately before your final answer:
+8. Report task completion immediately before your final answer:
 
    ```text
    python "<SKILL_DIR>/scripts/better_shutup_pipe.py" complete --session-id "7f3ac2..." --message "登录流程重构完成，测试通过。"
@@ -167,7 +197,7 @@ Always quote the script path.
 
 The status field is four bits. The app and this helper use the same values.
 Their Chinese names are, in order: 注册、完成、需要操作、错误、撤销需要操作、
-普通通知、计划更新、步骤完成。
+普通通知、计划更新、步骤完成、文件下载。
 
 | Code | Name | CLI | Purpose | Recommended use |
 |---|---|---|---|---|
@@ -179,7 +209,8 @@ Their Chinese names are, in order: 注册、完成、需要操作、错误、撤
 | `0101` | Notify | `notify` | Inform the user without asking for action | Progress updates, observations, non-blocking context. Blue auto-close card. If you need an answer, use `0010`; if the task is done, use `0001`. |
 | `0110` | Plan update | `plan` | Create or update plan steps | When you form or revise a plan, including late in the task. Top-level keys are 1-based indices; same index overwrites. Blue auto-close card. |
 | `0111` | Step complete | `step-done` | Mark one existing plan step done | As each step finishes. Requires an index previously sent by `0110`. Does not complete the task. Blue auto-close card. |
-| `1000`–`1111` | Reserved | — | Future protocol use | Never send these. The current app rejects them. |
+| `1000` | File download | `download` | Download a URL to an absolute local path | When you need a file locally without writing/running a download script. The app downloads in the background; poll the target or `err.err`. Start is logged only; success is a blue card, failure a red card. |
+| `1001`–`1111` | Reserved | — | Future protocol use | Never send these. The current app rejects them. |
 
 ### Important state interactions
 
@@ -189,14 +220,23 @@ Their Chinese names are, in order: 注册、完成、需要操作、错误、撤
 - `0010` and `0011` reopen a completed session and cancel a running shutdown
   countdown. This prevents shutdown while a human decision or a fix is still
   outstanding.
-- `0101`, `0110`, and `0111` are also treated as new work for this purpose:
-  if the session was already complete, they reopen it and cancel the countdown.
-  Do not send them after `0001` unless you intend to reopen the task.
+- `0101`, `0110`, `0111`, and `1000` are also treated as new work for this
+  purpose: if the session was already complete, they reopen it and cancel the
+  countdown. Do not send them after `0001` unless you intend to reopen the task.
 - `0100` does not reopen a completed session and does not cancel a countdown.
 - `0111` does not complete the session even when every step is done. Always
   send `0001` at the end.
 - Overwriting a plan step with different text resets that step to incomplete.
   Re-sending the same text preserves its completed state.
+- The app never sends download progress or results back to the Agent. The CLI's
+  JSON is local output. Poll the target file for success, or `err.err` for
+  failure; existing targets are preserved on failure and replaced atomically on
+  success.
+- A failed download is shown as a red card and appends `err.err`; it does not
+  set the session's error state automatically. The Agent must inspect the
+  result and send `0011` or retry as appropriate.
+- Use `--quiet` with an explicit session ID to suppress successful CLI output;
+  errors still print JSON.
 
 ## Choosing the right status
 
@@ -206,10 +246,61 @@ Their Chinese names are, in order: 注册、完成、需要操作、错误、撤
 - Task failed or blocked by an error → `0011`; then `0001` after it is resolved.
 - Have a plan or changed the plan → `0110`.
 - Finished one planned step → `0111`.
+- Need a file fetched to a local path → `1000`; then poll the target/`err.err`.
 - Whole task finished → `0001`.
 
 Do not use `0101` for a question that needs an answer. Do not use `0010` for a
 casual progress update. Do not use `0001` merely because you are pausing.
+
+## Subagents and nested agents
+
+All subagents must also use BetterShutup for their own tracked work. The parent
+agent is responsible for giving them the CLI path and the tracking rules,
+because subagents may not load this skill automatically.
+
+When spawning a subagent for a tracked task, include this in its prompt:
+
+- The absolute path to `better_shutup_pipe.py` (the skill helper), or the
+  installed skill directory. Do not make the subagent guess the working
+  directory.
+- A unique session ID, for example
+  `<parent-session-id>-sub-<role>-<short-random>`, and a name such as
+  `Parent Agent · Subtask name`.
+- The instruction to register its own session and to send `complete`, `error`,
+  or `action` for its own subtask. It must not complete the parent session.
+- The rules in this skill: default tracking for documentation/directory/skill
+  work, task-based completion (not turn-based), `--quiet` with an explicit
+  session ID for low output, and the app lifecycle rule: it may start
+  BetterShutup if needed but must never close, kill, or restart it or cancel a
+  planned shutdown.
+- The one-way rule: the app never sends results back. For `download`, poll the
+  target file or `err.err` before reporting completion.
+- A requirement to report its session ID and final status back to the parent.
+
+A ready-to-use subagent instruction:
+
+```text
+Track this subtask with BetterShutup. Register a new session using
+"python <absolute-skill-dir>/scripts/better_shutup_pipe.py" register
+--name "<parent name> · <subtask>" --session-id "<parent-id>-sub-<unique>"
+[--quiet]. Follow the BetterShutup skill defaults: track documentation and
+directory work; completion is task-based, not turn-based; use action/resume
+when the user must decide; use the app one-way only; poll target files or
+err.err for downloads. You may start BetterShutup if it is not running, but
+never close, kill, or restart it or cancel shutdown. Send complete/error for
+this subtask before your final response, and report your session ID. Do not
+complete the parent session.
+```
+
+- Subagents must mark each plan step with `step-done` as soon as it is actually
+  completed, not only at the end of the subtask.
+- The parent must ensure every subagent session completes; a forgotten
+  subagent session can block a planned shutdown.
+- If a subagent cannot run the helper (for example, no Python/pipe access), it
+  must tell the parent, which should track that subtask under the parent session
+  or ask the user how to proceed.
+- Subagents must not close or restart the shared app, even if they started a
+  separate process for a test.
 
 ## Exit codes and failure handling
 
@@ -225,7 +316,8 @@ casual progress update. Do not use `0001` merely because you are pausing.
   missing/invalid command-line arguments).
 
 All normal output and argument errors are one JSON object on stdout. Parse the
-JSON rather than relying on stderr. PowerShell and Bash quoting are fine; pass
+JSON rather than relying on stderr. With `--quiet`, successful commands print
+nothing; errors still print JSON. PowerShell and Bash quoting are fine; pass
 the text as a single argument.
 
 If `python` is unavailable, try `py -3` or the project's Python executable.
@@ -251,6 +343,8 @@ The script only uses the Python standard library.
 - `--timeout-ms <ms>`: connection timeout; default 5000.
 - `--dry-run`: build and validate the frame without sending it. For diagnostics
   only; do not use it in normal reporting.
+- `--quiet`: suppress successful output. `register --quiet` requires an explicit
+  `--session-id`. Errors and argument problems still print JSON.
 
 The default pipe is `\\.\pipe\BetterShutup`.
 
@@ -264,11 +358,13 @@ or use the better-shutup skill, use the skill by default: register one session
 at task start, retain its session ID, and keep it open until the task itself is
 finished. Send complete only when the task is done, not when the conversational
 turn ends. Use action when a user decision is required, and resume after the
-user responds. Plan updates, step completion, and informational messages are
-progress signals and never replace the final completion message. You may start
-BetterShutup if it is not running, but never close, kill, or restart it, and
-never cancel a planned shutdown; only the user may do that. Do not register
-unrelated tasks that the user did not ask to track.
+user responds. Plan updates, step completion, informational messages, and file
+downloads are progress signals and never replace the final completion message.
+You may start BetterShutup if it is not running, but never close, kill, or
+restart it, and never cancel a planned shutdown; only the user may do that.
+All subagents must register their own BetterShutup sessions, receive the CLI
+path from the parent, and complete them; a forgotten subagent session can block
+shutdown. Do not register unrelated tasks that the user did not ask to track.
 ```
 
 This keeps sessions intentional and prevents stale sessions from blocking a

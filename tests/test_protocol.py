@@ -29,6 +29,7 @@ def test_status_codes_are_four_bit_binary() -> None:
         Status.NOTIFY: 0b0101,
         Status.PLAN: 0b0110,
         Status.STEP_COMPLETE: 0b0111,
+        Status.FILE_DOWNLOAD: 0b1000,
     }
     for status, code in expected.items():
         assert int(status) == code
@@ -116,6 +117,28 @@ def test_plan_frame_is_top_level_index_mapping() -> None:
     assert decoded.steps == (("1", "分析代码"), ("2", "修改实现"))
 
 
+def test_file_download_frame_is_one_way_request() -> None:
+    frame = encode_message(
+        Status.FILE_DOWNLOAD,
+        {
+            "session_id": "id-1",
+            "url": "https://example.com/archive.zip",
+            "path": r"C:\Users\me\Downloads\archive.zip",
+        },
+    )
+    assert frame[0] == 0x08
+    payload = json.loads(frame[HEADER_SIZE:].decode("utf-8"))
+    assert payload == {
+        "session_id": "id-1",
+        "url": "https://example.com/archive.zip",
+        "path": r"C:\Users\me\Downloads\archive.zip",
+    }
+    decoded = decode_frame(frame)
+    assert decoded.status is Status.FILE_DOWNLOAD
+    assert decoded.url == "https://example.com/archive.zip"
+    assert decoded.path == r"C:\Users\me\Downloads\archive.zip"
+
+
 def test_length_counts_utf8_bytes_not_characters() -> None:
     frame = encode_message(
         Status.COMPLETE,
@@ -140,7 +163,7 @@ def test_rejects_reserved_header_bits() -> None:
 
 def test_rejects_undefined_status_codes() -> None:
     body = b'{"session_id":"id","message":"x"}'
-    for status in range(0x08, 0x10):
+    for status in range(0x09, 0x10):
         frame = bytes([status]) + len(body).to_bytes(3, "big") + body
         with pytest.raises(ProtocolError, match="未定义"):
             decode_frame(frame)
@@ -249,6 +272,63 @@ def test_rejects_invalid_step_indices(index: str) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        "example.com/file",
+        "ftp://example.com/file",
+        "file:///C:/file",
+        "http://",
+    ],
+)
+def test_rejects_invalid_download_urls(url: str) -> None:
+    with pytest.raises(ProtocolError):
+        build_message(
+            Status.FILE_DOWNLOAD,
+            {
+                "session_id": "id",
+                "url": url,
+                "path": r"C:\temp\file.bin",
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "",
+        r"relative\file.bin",
+        "C:\\temp\\",
+        "C:\\",
+        "C:\\temp\\..",
+    ],
+)
+def test_rejects_invalid_download_paths(path: str) -> None:
+    with pytest.raises(ProtocolError):
+        build_message(
+            Status.FILE_DOWNLOAD,
+            {
+                "session_id": "id",
+                "url": "https://example.com/file.bin",
+                "path": path,
+            },
+        )
+
+
+def test_rejects_missing_download_fields() -> None:
+    with pytest.raises(ProtocolError, match="url"):
+        build_message(
+            Status.FILE_DOWNLOAD,
+            {"session_id": "id", "path": r"C:\temp\file.bin"},
+        )
+    with pytest.raises(ProtocolError, match="path"):
+        build_message(
+            Status.FILE_DOWNLOAD,
+            {"session_id": "id", "url": "https://example.com/file"},
+        )
+
+
 def test_rejects_non_string_optional_messages() -> None:
     with pytest.raises(ProtocolError, match="必须是字符串"):
         build_message(
@@ -328,6 +408,18 @@ def test_message_as_json_object_is_canonical() -> None:
         "session_id": "id",
         "step_index": "2",
         "message": "done",
+    }
+
+    download = Message(
+        status=Status.FILE_DOWNLOAD,
+        session_id="id",
+        url="https://example.com/file",
+        path=r"C:\temp\file",
+    )
+    assert download.as_json_object() == {
+        "session_id": "id",
+        "url": "https://example.com/file",
+        "path": r"C:\temp\file",
     }
 
 

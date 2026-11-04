@@ -27,6 +27,7 @@ from .config import (
     sounds_dir,
 )
 from .core import Coordinator, NoticeKind, Transition
+from .downloader import DownloadManager
 from .pipe_server import PipeServer
 from .protocol import Message, ProtocolError, decode_frame
 from .shutdown import perform_shutdown
@@ -137,6 +138,9 @@ class BetterShutupApp:
         self.dry_run = dry_run
         self.data_dir = data_dir
         self.coordinator = Coordinator(config.countdown_seconds)
+        self.downloads = DownloadManager(
+            logging.getLogger("better_shutup.downloader")
+        )
         self.theme = Theme(root)
         self._incoming: queue.Queue[_IncomingEvent] = queue.Queue()
         self._server: PipeServer | None = None
@@ -229,6 +233,10 @@ class BetterShutupApp:
             self.notifications.close_all()
         except Exception:
             LOGGER.exception("关闭通知失败")
+        try:
+            self.downloads.close()
+        except Exception:
+            LOGGER.exception("关闭文件下载管理器失败")
         if self._server is not None:
             try:
                 self._server.stop()
@@ -325,6 +333,8 @@ class BetterShutupApp:
             return
         try:
             changed = self._drain_events()
+            if self._drain_downloads():
+                changed = True
             if changed:
                 self._sync_state()
             self._check_pipe_listener()
@@ -381,6 +391,29 @@ class BetterShutupApp:
                     self._apply_transition(transition)
         return processed
 
+    def _drain_downloads(self) -> bool:
+        processed = False
+        for result in self.downloads.drain():
+            processed = True
+            try:
+                transition = self.coordinator.download_finished(
+                    session_id=result.session_id,
+                    url=result.url,
+                    path=result.path,
+                    success=result.success,
+                    detail=result.error,
+                    bytes_written=result.bytes_written,
+                )
+            except Exception:
+                LOGGER.exception("处理文件下载结果失败")
+                self._notify_system_error(
+                    "文件下载结果处理失败",
+                    result.path,
+                )
+                continue
+            self._apply_transition(transition)
+        return processed
+
     def _apply_transition(self, transition: Transition) -> None:
         for line in transition.logs:
             self._log(_log_level_for_line(line), line)
@@ -398,12 +431,16 @@ class BetterShutupApp:
                     NoticeKind.NOTIFY: "消息",
                     NoticeKind.PLAN: "计划更新",
                     NoticeKind.STEP_COMPLETE: "步骤完成",
+                    NoticeKind.DOWNLOAD_SUCCESS: "文件下载完成",
+                    NoticeKind.DOWNLOAD_FAILURE: "文件下载失败",
                 }.get(notice.kind, "消息")
                 level = {
                     NoticeKind.COMPLETE: "success",
                     NoticeKind.ACTION: "warning",
                     NoticeKind.ERROR: "error",
                     NoticeKind.STEP_COMPLETE: "success",
+                    NoticeKind.DOWNLOAD_SUCCESS: "success",
+                    NoticeKind.DOWNLOAD_FAILURE: "error",
                 }.get(notice.kind, "info")
                 self._log(level, f"{prefix}：{_limit(notice.text)}")
             try:
@@ -417,6 +454,25 @@ class BetterShutupApp:
                 )
             except Exception:
                 LOGGER.exception("显示通知失败")
+        for request in transition.download_requests:
+            if self._closing:
+                break
+            try:
+                self.downloads.start(
+                    request.session_id,
+                    request.url,
+                    request.path,
+                )
+            except Exception as exc:
+                LOGGER.exception("启动文件下载失败")
+                failed = self.coordinator.download_finished(
+                    session_id=request.session_id,
+                    url=request.url,
+                    path=request.path,
+                    success=False,
+                    detail=f"启动下载失败: {exc}",
+                )
+                self._apply_transition(failed)
 
     def _handle_pipe_error(self, message: str) -> None:
         self._log("error", message)
@@ -507,6 +563,8 @@ class BetterShutupApp:
             # arrived.  A 200-item poll cap is fine for UI responsiveness, but
             # it must not hide a late action/error at the shutdown boundary.
             changed = self._drain_events(limit=None)
+            if self._drain_downloads():
+                changed = True
             if changed:
                 self._sync_state()
             if self._closing or self._firing:

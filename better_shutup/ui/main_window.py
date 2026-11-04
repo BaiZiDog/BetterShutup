@@ -695,6 +695,7 @@ class MainWindow:
                     Status.NOTIFY: "消息",
                     Status.PLAN: "计划已更新",
                     Status.STEP_COMPLETE: "步骤完成",
+                    Status.FILE_DOWNLOAD: "文件下载",
                 }.get(session.last_event, "—")
             self.tree.insert(
                 "",

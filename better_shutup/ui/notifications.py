@@ -78,6 +78,20 @@ _KIND_STYLE = {
         "title": "步骤完成",
         "icon": "✓",
     },
+    NoticeKind.DOWNLOAD_SUCCESS: {
+        **_INFO_CARD_STYLE,
+        "title": "文件下载完成",
+        "icon": "↓",
+    },
+    NoticeKind.DOWNLOAD_FAILURE: {
+        "title": "文件下载失败",
+        "icon": "×",
+        "accent": colors.DANGER,
+        "soft": colors.DANGER_SOFT,
+        "sound": "error",
+        "auto": False,
+        "button": "关闭",
+    },
     NoticeKind.PROTOCOL_ERROR: {
         "title": "协议错误",
         "icon": "×",

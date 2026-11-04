@@ -83,6 +83,19 @@ def step_done(
     )
 
 
+def download(
+    session_id: str = "s1",
+    url: str = "https://example.com/file.bin",
+    path: str = r"C:\temp\file.bin",
+) -> Message:
+    return Message(
+        status=Status.FILE_DOWNLOAD,
+        session_id=session_id,
+        url=url,
+        path=path,
+    )
+
+
 def test_register_adds_session_without_notification() -> None:
     coordinator = Coordinator()
     transition = coordinator.handle_message(register(), now=10.0)
@@ -385,6 +398,87 @@ def test_step_complete_marks_step_but_does_not_complete_session() -> None:
     second = coordinator.handle_message(step_done("2"), now=3.0)
     assert session.completed is False
     assert any("所有计划步骤已完成" in log for log in second.logs)
+
+
+def test_file_download_starts_request_and_counts_as_new_work() -> None:
+    coordinator = Coordinator(20)
+    coordinator.handle_message(register(), now=0.0)
+    coordinator.handle_message(complete(), now=1.0)
+    coordinator.set_planned(True, now=2.0)
+    assert coordinator.deadline is not None
+
+    transition = coordinator.handle_message(download(), now=3.0)
+    session = coordinator.sessions[0]
+    assert session.completed is False
+    assert coordinator.deadline is None
+    assert transition.notices == []
+    assert len(transition.download_requests) == 1
+    request = transition.download_requests[0]
+    assert request.session_id == "s1"
+    assert request.url == "https://example.com/file.bin"
+    assert request.path == r"C:\temp\file.bin"
+    assert session.last_event is Status.FILE_DOWNLOAD
+    assert "开始下载文件" in session.last_text
+    assert any("开始下载文件" in log for log in transition.logs)
+
+
+def test_file_download_success_notice() -> None:
+    coordinator = Coordinator()
+    coordinator.handle_message(register(), now=0.0)
+    coordinator.handle_message(download(), now=1.0)
+
+    transition = coordinator.download_finished(
+        session_id="s1",
+        url="https://example.com/file.bin",
+        path=r"C:\temp\file.bin",
+        success=True,
+        bytes_written=1234,
+    )
+    session = coordinator.sessions[0]
+    assert session.completed is False
+    assert session.has_error is False
+    assert session.last_text == r"文件下载完成：C:\temp\file.bin"
+    assert transition.notices[0].kind is NoticeKind.DOWNLOAD_SUCCESS
+    assert "file.bin" in transition.notices[0].text
+    assert any("1234" in log for log in transition.logs)
+
+
+def test_file_download_failure_reopens_completed_session_and_cancels_countdown() -> None:
+    coordinator = Coordinator(20)
+    coordinator.handle_message(register(), now=0.0)
+    coordinator.handle_message(download(), now=1.0)
+    coordinator.handle_message(complete(), now=2.0)
+    coordinator.set_planned(True, now=3.0)
+    assert coordinator.deadline is not None
+
+    transition = coordinator.download_finished(
+        session_id="s1",
+        url="https://example.com/file.bin",
+        path=r"C:\temp\file.bin",
+        success=False,
+        detail="HTTP 500",
+        bytes_written=5,
+    )
+    session = coordinator.sessions[0]
+    assert session.completed is False
+    assert session.has_error is False
+    assert coordinator.deadline is None
+    assert transition.notices[0].kind is NoticeKind.DOWNLOAD_FAILURE
+    assert "HTTP 500" in transition.notices[0].text
+    assert any("重新视为进行中" in log for log in transition.logs)
+    assert any("倒计时已取消" in log for log in transition.logs)
+
+
+def test_file_download_result_for_unknown_session_only_logs() -> None:
+    coordinator = Coordinator()
+    transition = coordinator.download_finished(
+        session_id="missing",
+        url="https://example.com/file.bin",
+        path=r"C:\temp\file.bin",
+        success=True,
+    )
+    assert transition.notices == []
+    assert any("已不在注册表" in log for log in transition.logs)
 
 
 def test_reregister_completed_session_preserves_completion_and_countdown() -> None:

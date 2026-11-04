@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 import math
+from pathlib import PureWindowsPath
 import time
 
 from .protocol import Message, Status
@@ -22,6 +23,8 @@ class NoticeKind(str, Enum):
     NOTIFY = "notify"
     PLAN = "plan"
     STEP_COMPLETE = "step_complete"
+    DOWNLOAD_SUCCESS = "download_success"
+    DOWNLOAD_FAILURE = "download_failure"
     PROTOCOL_ERROR = "protocol_error"
 
 
@@ -60,6 +63,14 @@ class Session:
 
 
 @dataclass(frozen=True, slots=True)
+class DownloadRequest:
+    session_id: str
+    session_name: str
+    url: str
+    path: str
+
+
+@dataclass(frozen=True, slots=True)
 class Notice:
     kind: NoticeKind
     session_id: str
@@ -73,6 +84,7 @@ class Transition:
     logs: list[str] = field(default_factory=list)
     shutdown_due: bool = False
     dismiss_action_session_ids: list[str] = field(default_factory=list)
+    download_requests: list[DownloadRequest] = field(default_factory=list)
 
 
 def _summarize_steps(steps: tuple[tuple[str, str], ...], limit: int = 500) -> str:
@@ -155,6 +167,8 @@ class Coordinator:
             return self._handle_plan(session, message, transition)
         if message.status is Status.STEP_COMPLETE:
             return self._handle_step_complete(session, message, transition)
+        if message.status is Status.FILE_DOWNLOAD:
+            return self._handle_file_download(session, message, transition)
 
         if message.status in (
             Status.ACTION,
@@ -363,6 +377,88 @@ class Coordinator:
         if all(item.completed for item in session.plan.values()):
             log += " 所有计划步骤已完成，等待 Agent 上报任务完成。"
         transition.logs.append(log)
+        return transition
+
+    def _handle_file_download(
+        self,
+        session: Session,
+        message: Message,
+        transition: Transition,
+    ) -> Transition:
+        self._note_new_work(session, message, transition)
+        filename = PureWindowsPath(message.path).name
+        self._touch(session, message, f"开始下载文件：{filename}")
+        transition.download_requests.append(
+            DownloadRequest(
+                session_id=session.session_id,
+                session_name=session.name,
+                url=message.url,
+                path=message.path,
+            )
+        )
+        transition.logs.append(
+            f"会话「{session.name}」开始下载文件：{message.url} -> "
+            f"{message.path}。"
+        )
+        return transition
+
+    def download_finished(
+        self,
+        *,
+        session_id: str,
+        url: str,
+        path: str,
+        success: bool,
+        detail: str = "",
+        bytes_written: int = 0,
+    ) -> Transition:
+        """Record a background file-download result on the UI thread."""
+
+        transition = Transition()
+        session = self._sessions.get(session_id)
+        if session is None:
+            transition.logs.append(
+                f"文件下载{'完成' if success else '失败'}，但会话 "
+                f"「{session_id}」已不在注册表中：{path}。"
+            )
+            return transition
+
+        if success:
+            text = f"文件下载完成：{path}"
+            notice_kind = NoticeKind.DOWNLOAD_SUCCESS
+            transition.logs.append(
+                f"会话「{session.name}」文件下载完成：{path}"
+                f"（{bytes_written} 字节）。"
+            )
+        else:
+            text = f"文件下载失败：{path}"
+            if detail:
+                text += f"\n{detail}"
+            notice_kind = NoticeKind.DOWNLOAD_FAILURE
+            transition.logs.append(
+                f"会话「{session.name}」文件下载失败：{url} -> {path}；{detail}"
+            )
+            if session.completed:
+                session.completed = False
+                transition.logs.append(
+                    "已完成会话收到文件下载失败结果，已重新视为进行中。"
+                )
+                if self._deadline is not None:
+                    self._deadline = None
+                    transition.logs.append(
+                        "文件下载失败，本次关机倒计时已取消。"
+                    )
+
+        session.last_text = text
+        session.updated_at = datetime.now()
+        transition.notices.append(
+            Notice(
+                kind=notice_kind,
+                session_id=session.session_id,
+                session_name=session.name,
+                text=text,
+            )
+        )
         return transition
 
     def _note_new_work(

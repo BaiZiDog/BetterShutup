@@ -70,10 +70,12 @@ byte1-3: 24-bit big-endian length of the UTF-8 JSON body
 ```
 
 Statuses are `0000` register, `0001` complete, `0010` action, `0011` error,
-`0100` resume, `0101` notify, `0110` plan, and `0111` step complete. Codes
-`1000`–`1111` are reserved and rejected. Each connection carries exactly one
-frame, written in one `WriteFile`; the server closes after reading it. The body
-maximum is 16 MiB − 1. There is no acknowledgement channel.
+`0100` resume, `0101` notify, `0110` plan, `0111` step complete, and `1000`
+file download. Codes `1001`–`1111` are reserved and rejected. Each connection
+carries exactly one frame, written in one `WriteFile`; the server closes after
+reading it. The body maximum is 16 MiB − 1. There is no acknowledgement
+channel: the app never sends anything to the agent, and the standalone CLI's
+JSON is local process output.
 
 Status `0000` never emits a notification and only registers a session or
 updates its display name. An existing ID must not clear action-needed, clear an
@@ -91,6 +93,13 @@ upserts steps, and changing an existing step's text resets that step to
 incomplete. Status `0111` requires an existing step index and never completes
 the task automatically.
 
+Status `1000` carries `session_id`, `url` (http/https only), and `path` (an
+absolute Windows path whose last segment is the file name). The core emits a
+`DownloadRequest`; `downloader.py` performs an adaptive multi-threaded range
+download in the background. The app never sends a result frame: success is an
+atomic target-file replacement, failure leaves the old target untouched and
+appends `err.err` in the target directory. `1001`–`1111` remain reserved.
+
 Keep `protocol.py`, the standalone Skill CLI's framing, and
 `skills/better-shutup/references/protocol.md` in sync. The parity tests in
 `tests/test_skill_client.py` are the guardrail.
@@ -107,6 +116,10 @@ Keep `protocol.py`, the standalone Skill CLI's framing, and
 - `app.py` owns the only Tk event loop. Pipe workers must never touch Tk; they
   enqueue events and the UI polls the queue with `after`. Keep all session and
   shutdown state mutations on the UI thread.
+- `downloader.py` runs each file download in a background manager thread with
+  an adaptive pool of range workers. It writes only to disk and returns results
+  through a thread-safe queue; the UI thread calls `Coordinator.download_finished`.
+  Never start downloads or touch Tk from the pipe worker itself.
 
 ### Session and shutdown state machine
 
@@ -131,6 +144,11 @@ Keep `protocol.py`, the standalone Skill CLI's framing, and
   `0111` requires the index to exist and only marks that step complete. An
   unknown-index `0111` is a protocol error and leaves session state and any
   countdown untouched; it does not reopen a completed session.
+- `1000` file download counts as new work at request time; it does not complete
+  the session. The core emits a `DownloadRequest`; `download_finished()` records
+  success/failure, updates `last_text`, and emits `DOWNLOAD_SUCCESS` or
+  `DOWNLOAD_FAILURE`. A failure that arrives after completion reopens the
+  session and cancels the countdown.
 - A countdown starts only when the plan is armed, at least one session exists,
   and all registered sessions are complete. Removing completed sessions does
   not cancel an already-running countdown.
@@ -146,9 +164,10 @@ Keep `protocol.py`, the standalone Skill CLI's framing, and
   session table has a plan-progress column and uses `action_needed`/`has_error`
   flags for coloring.
 - `ui/notifications.py`: borderless topmost cards, bottom-right stacking,
-  completion/message/plan/step auto-dismiss, long-text detail window. Notify,
-  plan, and step-complete cards use the blue primary color and the `notify`
-  sound; action and error cards remain manual-close.
+  completion/message/plan/step/download-success auto-dismiss, long-text detail
+  window. Notify, plan, step-complete, and download-success cards use the blue
+  primary color and the `notify` sound; action, error, and download-failure
+  cards remain manual-close. Download start is log-only.
 - `ui/countdown.py`: topmost countdown/cancel window.
 - `ui/settings.py`: independent WAV overrides and preview for the four sound
   kinds (`complete`, `action`, `error`, `notify`).
@@ -167,6 +186,14 @@ Keep `protocol.py`, the standalone Skill CLI's framing, and
   before showing any modal confirmation. Do not schedule a system `shutdown`
   timer that survives app exit.
 - Do not execute or eval text received from the pipe. It is only displayed.
+- Status `1000` allows a local agent to make the app fetch an HTTP(S) URL and
+  write the response to an arbitrary absolute path. Keep it restricted to
+  trusted local agents; never execute downloaded content, and preserve the
+  absolute-path/http(s)-only validation.
+- The app is receive-only. The standalone CLI's JSON is local output; never add
+  an app-to-agent response channel for downloads or progress.
+- Every subagent that performs tracked work must register and complete its own
+  session; the parent must pass the CLI path and ensure those sessions finish.
 - The Agent Skill may start BetterShutup when tracking is requested, but it
   must never close, kill, or restart the app, or cancel a planned shutdown.
   Only the user may close the app; an agent that starts it leaves it running.
@@ -187,6 +214,14 @@ Keep `protocol.py`, the standalone Skill CLI's framing, and
   documentation, browse/search a directory, or use the skill itself. Session
   completion is task-based, not conversation-based: `complete` means the task
   is finished, not that a conversational turn ended.
+- Agents must send `step-done` immediately after each plan step is actually
+  completed, not batch the status updates at the end of the task.
+- Parent agents must give every subagent the absolute helper path and require a
+  unique session ID, task-based completion, and the start-only/never-close
+  lifecycle rule. Subagents also update step status immediately. The parent
+  must ensure subagent sessions complete.
+- The CLI supports `--quiet` for successful commands; `register --quiet`
+  requires an explicit `--session-id`. Errors always print JSON.
 - The public repository is maintained as `BaiZiDog/BetterShutup` under the
   GNU General Public License v3.0, GPL-3.0-only (`LICENSE`, `NOTICE`).
 

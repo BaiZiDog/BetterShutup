@@ -18,8 +18,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
 import json
+from pathlib import PureWindowsPath
 import unicodedata
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 HEADER_SIZE = 4
 MAX_BODY_SIZE = 0xFFFFFF
@@ -31,6 +33,8 @@ MAX_SESSION_NAME_LENGTH = 256
 MAX_PLAN_INDEX = 9999
 MAX_PLAN_STEPS_PER_MESSAGE = 200
 MAX_PLAN_STEP_TEXT_LENGTH = 2000
+MAX_URL_LENGTH = 8192
+MAX_DOWNLOAD_PATH_LENGTH = 8192
 
 
 class ProtocolError(ValueError):
@@ -46,6 +50,7 @@ class Status(IntEnum):
     NOTIFY = 0b0101
     PLAN = 0b0110
     STEP_COMPLETE = 0b0111
+    FILE_DOWNLOAD = 0b1000
 
     @property
     def binary(self) -> str:
@@ -61,6 +66,7 @@ STATUS_NAMES: dict[Status, str] = {
     Status.NOTIFY: "普通通知",
     Status.PLAN: "更新计划",
     Status.STEP_COMPLETE: "步骤完成",
+    Status.FILE_DOWNLOAD: "文件下载",
 }
 
 REQUIRED_FIELDS: dict[Status, tuple[str, ...]] = {
@@ -72,6 +78,7 @@ REQUIRED_FIELDS: dict[Status, tuple[str, ...]] = {
     Status.NOTIFY: ("session_id", "message"),
     Status.PLAN: ("session_id",),
     Status.STEP_COMPLETE: ("session_id", "step_index"),
+    Status.FILE_DOWNLOAD: ("session_id", "url", "path"),
 }
 
 TEXT_FIELDS: dict[Status, str] = {
@@ -83,6 +90,7 @@ TEXT_FIELDS: dict[Status, str] = {
     Status.NOTIFY: "message",
     Status.PLAN: "",
     Status.STEP_COMPLETE: "message",
+    Status.FILE_DOWNLOAD: "",
 }
 
 
@@ -96,6 +104,8 @@ class Message:
     session_name: str = ""
     steps: tuple[tuple[str, str], ...] = ()
     step_index: str = ""
+    url: str = ""
+    path: str = ""
 
     @property
     def status_name(self) -> str:
@@ -131,6 +141,12 @@ class Message:
             if self.text:
                 payload["message"] = self.text
             return payload
+        if self.status is Status.FILE_DOWNLOAD:
+            return {
+                "session_id": self.session_id,
+                "url": self.url,
+                "path": self.path,
+            }
         return {
             "session_id": self.session_id,
             self.text_field: self.text,
@@ -206,6 +222,41 @@ def _validate_step_text(value: Any, index: str) -> str:
     return text
 
 
+def _validate_url(value: Any) -> str:
+    text = _validate_text(value, "url")
+    if not text:
+        raise ProtocolError("url 不能为空")
+    if len(text) > MAX_URL_LENGTH:
+        raise ProtocolError(f"url 不能超过 {MAX_URL_LENGTH} 个字符")
+    try:
+        parsed = urlsplit(text)
+    except ValueError as exc:
+        raise ProtocolError(f"url 不是合法 URL: {exc}") from exc
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise ProtocolError("url 只支持 http/https")
+    if not parsed.netloc:
+        raise ProtocolError("url 缺少主机名")
+    return text
+
+
+def _validate_download_path(value: Any) -> str:
+    text = _validate_text(value, "path")
+    if not text:
+        raise ProtocolError("path 不能为空")
+    if len(text) > MAX_DOWNLOAD_PATH_LENGTH:
+        raise ProtocolError(
+            f"path 不能超过 {MAX_DOWNLOAD_PATH_LENGTH} 个字符"
+        )
+    path = PureWindowsPath(text)
+    if not path.is_absolute():
+        raise ProtocolError("path 必须是绝对路径")
+    if not path.name or path.name in (".", ".."):
+        raise ProtocolError("path 最后一段必须是文件名")
+    if text.endswith(("\\", "/")):
+        raise ProtocolError("path 最后一段必须是文件名，不能以分隔符结尾")
+    return text
+
+
 def _optional_text(fields: Mapping[str, Any], field_name: str) -> str:
     if field_name not in fields:
         return ""
@@ -276,6 +327,13 @@ def build_message(status: Status, fields: Mapping[str, Any]) -> Message:
             status=status,
             session_id=session_id,
             text=_optional_text(fields, "message"),
+        )
+    if status is Status.FILE_DOWNLOAD:
+        return Message(
+            status=status,
+            session_id=session_id,
+            url=_validate_url(fields["url"]),
+            path=_validate_download_path(fields["path"]),
         )
 
     text_field = TEXT_FIELDS[status]

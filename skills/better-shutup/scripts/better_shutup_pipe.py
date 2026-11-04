@@ -15,6 +15,7 @@ Commands:
     notify      send an informational message to the user
     plan        create or update plan steps
     step-done   mark one plan step as complete
+    download    ask the app to download a URL to an absolute local path
 
 Every command opens one short-lived pipe connection and writes exactly one
 complete frame.  BetterShutup does not send an acknowledgement, so success
@@ -28,11 +29,13 @@ import ctypes
 from ctypes import wintypes
 import json
 import os
+from pathlib import PureWindowsPath
 import sys
 import time
 import unicodedata
 import uuid
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 DEFAULT_PIPE_NAME = r"\\.\pipe\BetterShutup"
 HEADER_SIZE = 4
@@ -42,6 +45,8 @@ MAX_SESSION_NAME_LENGTH = 256
 MAX_PLAN_INDEX = 9999
 MAX_PLAN_STEPS_PER_MESSAGE = 200
 MAX_PLAN_STEP_TEXT_LENGTH = 2000
+MAX_URL_LENGTH = 8192
+MAX_DOWNLOAD_PATH_LENGTH = 8192
 
 STATUS_REGISTER = 0b0000
 STATUS_COMPLETE = 0b0001
@@ -51,6 +56,7 @@ STATUS_RESUME = 0b0100
 STATUS_NOTIFY = 0b0101
 STATUS_PLAN = 0b0110
 STATUS_STEP_COMPLETE = 0b0111
+STATUS_FILE_DOWNLOAD = 0b1000
 
 STATUS_NAMES = {
     STATUS_REGISTER: "register",
@@ -61,6 +67,7 @@ STATUS_NAMES = {
     STATUS_NOTIFY: "notify",
     STATUS_PLAN: "plan",
     STATUS_STEP_COMPLETE: "step_done",
+    STATUS_FILE_DOWNLOAD: "download",
 }
 
 TEXT_FIELDS = {
@@ -225,6 +232,41 @@ def _optional_text(fields: Mapping[str, Any], field_name: str) -> str:
     return _validate_text(fields[field_name], field_name)
 
 
+def _validate_url(value: Any) -> str:
+    text = _validate_text(value, "url")
+    if not text:
+        raise ValidationError("url must not be empty")
+    if len(text) > MAX_URL_LENGTH:
+        raise ValidationError(f"url must be at most {MAX_URL_LENGTH} characters")
+    try:
+        parsed = urlsplit(text)
+    except ValueError as exc:
+        raise ValidationError(f"url is not valid: {exc}") from exc
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise ValidationError("url must use http or https")
+    if not parsed.netloc:
+        raise ValidationError("url is missing a host")
+    return text
+
+
+def _validate_download_path(value: Any) -> str:
+    text = _validate_text(value, "path")
+    if not text:
+        raise ValidationError("path must not be empty")
+    if len(text) > MAX_DOWNLOAD_PATH_LENGTH:
+        raise ValidationError(
+            f"path must be at most {MAX_DOWNLOAD_PATH_LENGTH} characters"
+        )
+    path = PureWindowsPath(text)
+    if not path.is_absolute():
+        raise ValidationError("path must be an absolute Windows path")
+    if not path.name or path.name in (".", ".."):
+        raise ValidationError("path must end with a file name")
+    if text.endswith(("\\", "/")):
+        raise ValidationError("path must not end with a separator")
+    return text
+
+
 def build_frame(status: int, fields: Mapping[str, Any]) -> bytes:
     """Build one complete frame using the BetterShutup wire protocol."""
 
@@ -278,6 +320,17 @@ def build_frame(status: int, fields: Mapping[str, Any]) -> bytes:
         text = _optional_text(fields, "message")
         if text:
             payload["message"] = text
+    elif status == STATUS_FILE_DOWNLOAD:
+        for field_name in ("session_id", "url", "path"):
+            if field_name not in fields:
+                raise ValidationError(
+                    f"download requires {field_name}"
+                )
+        payload = {
+            "session_id": _validate_session_id(fields["session_id"]),
+            "url": _validate_url(fields["url"]),
+            "path": _validate_download_path(fields["path"]),
+        }
     else:
         if "session_id" not in fields:
             raise ValidationError("session_id is required")
@@ -418,6 +471,14 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Validate/build the frame without connecting (diagnostic only)",
     )
+    common.add_argument(
+        "--quiet",
+        action="store_true",
+        help=(
+            "Suppress successful output; requires an explicit --session-id "
+            "for register. Errors still print JSON."
+        ),
+    )
 
     parser = _CliArgumentParser(
         prog="better-shutup-pipe",
@@ -510,10 +571,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Repeatable index/text pair; later duplicates overwrite earlier ones",
     )
 
+    download = sub.add_parser(
+        "download",
+        parents=[common],
+        help="Download a URL to an absolute Windows path (1000)",
+    )
+    download.add_argument("--session-id", required=True)
+    download.add_argument("--url", required=True)
+    download.add_argument(
+        "--path",
+        required=True,
+        help="Absolute destination path; the last segment is the file name",
+    )
+
     step_done = sub.add_parser(
         "step-done",
         parents=[common],
-        help="Mark one existing plan step as complete (0111)",
+        help="Mark one existing plan step complete (0111)",
     )
     step_done.add_argument("--session-id", required=True)
     step_done.add_argument(
@@ -560,6 +634,15 @@ def main(argv: list[str] | None = None) -> int:
     command = args.command
 
     session_id = getattr(args, "session_id", None)
+    if args.quiet and command == "register" and session_id is None:
+        _emit(
+            {
+                "ok": False,
+                "event": "register",
+                "error": "--quiet requires an explicit --session-id",
+            }
+        )
+        return 3
     step_index: str | None = None
     if command == "register":
         if session_id is None:
@@ -595,6 +678,13 @@ def main(argv: list[str] | None = None) -> int:
                 }
             )
             return exc.exit_code
+    elif command == "download":
+        status = STATUS_FILE_DOWNLOAD
+        fields = {
+            "session_id": session_id,
+            "url": args.url,
+            "path": args.path,
+        }
     else:
         status = STATUS_STEP_COMPLETE
         fields = {
@@ -622,6 +712,8 @@ def main(argv: list[str] | None = None) -> int:
                 result["step_index"] = step_index
             if status == STATUS_PLAN:
                 result["step_count"] = len(fields) - 1
+            if args.quiet:
+                return 0
             _emit(result)
             return 0
         send_frame(pipe_name, frame, timeout_ms=args.timeout_ms)
@@ -669,6 +761,8 @@ def main(argv: list[str] | None = None) -> int:
         result["step_index"] = step_index
     if status == STATUS_PLAN:
         result["step_count"] = len(fields) - 1
+    if args.quiet:
+        return 0
     _emit(result)
     return 0
 

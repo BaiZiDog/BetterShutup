@@ -83,6 +83,14 @@ def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
             Status.STEP_COMPLETE,
             {"session_id": "id-1", "step_index": "1", "message": "完成"},
         ),
+        (
+            Status.FILE_DOWNLOAD,
+            {
+                "session_id": "id-1",
+                "url": "https://example.com/archive.zip",
+                "path": r"C:\temp\archive.zip",
+            },
+        ),
     ],
 )
 def test_frame_bytes_match_application_protocol(status, fields) -> None:
@@ -120,6 +128,24 @@ def test_skill_validation() -> None:
         module.build_frame(
             module.STATUS_STEP_COMPLETE,
             {"session_id": "id", "step_index": "01"},
+        )
+    with pytest.raises(module.ValidationError):
+        module.build_frame(
+            module.STATUS_FILE_DOWNLOAD,
+            {
+                "session_id": "id",
+                "url": "ftp://example.com/file",
+                "path": r"C:\temp\file",
+            },
+        )
+    with pytest.raises(module.ValidationError):
+        module.build_frame(
+            module.STATUS_FILE_DOWNLOAD,
+            {
+                "session_id": "id",
+                "url": "https://example.com/file",
+                "path": r"relative\file",
+            },
         )
 
 
@@ -225,6 +251,23 @@ def test_cli_lifecycle_and_portability() -> None:
         assert step_message.status is Status.STEP_COMPLETE
         assert step_message.step_index == "1"
         assert step_message.text == "分析完成"
+
+        download = run_cli(
+            "download",
+            "--session-id",
+            "skill-1",
+            "--url",
+            "https://example.com/archive.zip",
+            "--path",
+            r"C:\temp\archive.zip",
+            "--pipe",
+            pipe_name,
+        )
+        assert download.returncode == 0, download.stderr + download.stdout
+        download_message = decode_frame(q.get(timeout=3))
+        assert download_message.status is Status.FILE_DOWNLOAD
+        assert download_message.url == "https://example.com/archive.zip"
+        assert download_message.path == r"C:\temp\archive.zip"
 
         complete = run_cli(
             "complete",
@@ -366,6 +409,85 @@ def test_cli_step_done_rejects_invalid_index() -> None:
     payload = json.loads(result.stdout)
     assert payload["ok"] is False
     assert "step index" in payload["error"]
+
+
+def test_cli_download_dry_run_uses_1000() -> None:
+    result = run_cli(
+        "download",
+        "--session-id",
+        "skill-1",
+        "--url",
+        "https://example.com/file.bin",
+        "--path",
+        r"C:\temp\file.bin",
+        "--dry-run",
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["event"] == "download"
+    assert payload["header_hex"].startswith("08")
+
+
+def test_cli_download_rejects_relative_path() -> None:
+    result = run_cli(
+        "download",
+        "--session-id",
+        "skill-1",
+        "--url",
+        "https://example.com/file.bin",
+        "--path",
+        r"relative\file.bin",
+        "--dry-run",
+    )
+    assert result.returncode == 3
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert "absolute" in payload["error"]
+
+
+def test_cli_quiet_success_is_silent() -> None:
+    result = run_cli(
+        "register",
+        "--name",
+        "Quiet",
+        "--session-id",
+        "quiet-1",
+        "--quiet",
+        "--dry-run",
+    )
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+
+
+def test_cli_quiet_requires_explicit_session_id() -> None:
+    result = run_cli(
+        "register",
+        "--name",
+        "Quiet",
+        "--quiet",
+        "--dry-run",
+    )
+    assert result.returncode == 3
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert "--session-id" in payload["error"]
+
+
+def test_cli_quiet_errors_still_output_json() -> None:
+    result = run_cli(
+        "complete",
+        "--session-id",
+        "bad id",
+        "--message",
+        "x",
+        "--quiet",
+        "--dry-run",
+    )
+    assert result.returncode == 3
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert "session_id" in payload["error"]
 
 
 def test_cli_missing_server_is_clean_error() -> None:
