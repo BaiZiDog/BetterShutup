@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ENTRY = ROOT / "better_shutup" / "BetterShutup.pyw"
 OUTPUT_DIR = ROOT / "dist"
 OUTPUT_NAME = "BetterShutup.exe"
+ICON = ROOT / "better_shutup" / "assets" / "BetterShutup.ico"
 DIST_DOCS = ("LICENSE", "NOTICE")
 
 
@@ -30,6 +31,8 @@ def build_command(*, assume_downloads: bool) -> list[str]:
         f"--output-filename={OUTPUT_NAME}",
         "--remove-output",
         "--include-package=better_shutup",
+        "--include-package-data=better_shutup",
+        f"--windows-icon-from-ico={ICON}",
         "--company-name=BaiZiDog",
         "--product-name=BetterShutup",
         "--file-version=0.3.0.0",
@@ -61,6 +64,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if not ENTRY.is_file():
         print(f"error: entry file not found: {ENTRY}", file=sys.stderr)
+        return 1
+    if not ICON.is_file():
+        print(f"error: icon file not found: {ICON}", file=sys.stderr)
         return 1
 
     command = build_command(assume_downloads=not args.no_downloads)

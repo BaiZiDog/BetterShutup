@@ -10,6 +10,7 @@ BetterShutup 是一个 Windows 多 Agent 协同工具：Agent 通过命名管道
 
 - 桌面应用：Python + tkinter，运行时无第三方依赖。
 - Agent Skill：标准 `SKILL.md` + 独立 Python CLI，兼容 Claude Code、DSH、TRAE；父 Agent 和所有子 Agent 都可以用各自的会话 ID 调用。
+- 应用图标：`better_shutup/assets/BetterShutup.ico`；源图保存在 `assets/BetterShutup-source.png`。
 - 通信：Windows 消息模式命名管道，`\\.\pipe\BetterShutup`。
 - 确认过的协议：4 字节头，低 4 位状态码 + 3 字节大端 JSON 长度；`1000` 为文件下载，`1001`–`1111` 预留给后续使用。
 - 可选单文件构建：Nuitka 原生可执行文件，见“编译单文件 EXE”。
@@ -239,6 +240,8 @@ python -m pytest -q
 better_shutup/        桌面应用（协议、核心状态机、Win32 管道、Tk UI）
   BetterShutup.pyw    无控制台启动入口，也是 Nuitka 构建入口
   downloader.py       自适应多线程分片下载、原子替换与 err.err
+  assets/             应用图标（ICO）
+assets/               图标源图与导出的 PNG
 skills/better-shutup/ 标准 Agent Skill + 独立 CLI + 协议说明
 tools/install_skill.py
 tools/build_exe.py    Nuitka 单文件构建脚本
@@ -270,7 +273,7 @@ dist\NOTICE.txt
 dist\SHA256SUMS.txt
 ```
 
-构建参数：Nuitka `--onefile`、`--zig`、Tkinter 插件、Windows GUI 模式（无控制台）。首次构建会安装/准备 Zig 工具链，耗时较长；如果自动下载失败，可先执行 `python -m pip install ziglang`，再重新运行 `python tools/build_exe.py`。
+构建参数：Nuitka `--onefile`、`--zig`、Tkinter 插件、Windows GUI 模式（无控制台）、应用图标 `--windows-icon-from-ico`，并通过 `--include-package-data=better_shutup` 打包窗口图标。首次构建会安装/准备 Zig 工具链，耗时较长；如果自动下载失败，可先执行 `python -m pip install ziglang`，再重新运行 `python tools/build_exe.py`。
 
 说明：Nuitka 将 Python 编译为原生机器码，其代码生成链路以 C 为后端，并不是把项目重写成手写 C++；这里交付的是原生单文件 Windows 可执行程序。
 

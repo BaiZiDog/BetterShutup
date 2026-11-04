@@ -24,6 +24,11 @@ def test_build_command_has_required_nuitka_flags() -> None:
     assert "--zig" in command
     assert "--enable-plugin=tk-inter" in command
     assert "--windows-console-mode=disable" in command
+    assert "--include-package-data=better_shutup" in command
+    assert any(
+        arg.startswith("--windows-icon-from-ico=") for arg in command
+    )
+    assert module.ICON.is_file()
     assert str(module.ENTRY) in command
     assert command[-1].endswith("BetterShutup.pyw")
 

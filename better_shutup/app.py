@@ -61,6 +61,17 @@ def _native_message(text: str, title: str = APP_NAME, flags: int = 0x10) -> None
         pass
 
 
+def _apply_window_icon(root: tk.Tk) -> None:
+    icon = Path(__file__).resolve().parent / "assets" / "BetterShutup.ico"
+    if not icon.is_file():
+        return
+    try:
+        root.iconbitmap(str(icon))
+        root.iconbitmap(default=str(icon))
+    except tk.TclError:
+        LOGGER.exception("设置应用图标失败")
+
+
 def _normalize_pipe_name(value: str) -> str:
     value = value.strip()
     if not value:
@@ -838,6 +849,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             logger=logging.getLogger("better_shutup.sounds"),
         )
         root = tk.Tk()
+        _apply_window_icon(root)
         root.withdraw()
         app = BetterShutupApp(
             root=root,

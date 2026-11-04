@@ -35,6 +35,9 @@ better-shutup = "better_shutup.app:main"
 [tool.setuptools.packages.find]
 include = ["better_shutup*"]
 
+[tool.setuptools.package-data]
+better_shutup = ["assets/*.ico"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"

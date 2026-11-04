@@ -172,6 +172,9 @@ Keep `protocol.py`, the standalone Skill CLI's framing, and
 - `ui/settings.py`: independent WAV overrides and preview for the four sound
   kinds (`complete`, `action`, `error`, `notify`).
 - `ui/theme.py`: DPI scaling, fonts, colors, ttk styles.
+- `better_shutup/assets/BetterShutup.ico` is the Tk default window icon and the
+  Nuitka `--windows-icon-from-ico` source. The source PNG lives under `assets/`;
+  keep the ICO in package data so the onefile build can set it at runtime.
 - `sounds.py`: deterministic built-in WAV generation plus a serialized playback
   worker. Do not play sounds synchronously on the Tk thread.
 - `config.py` stores settings/sounds/logs under `%LOCALAPPDATA%\BetterShutup`
