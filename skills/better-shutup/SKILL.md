@@ -116,9 +116,10 @@ Always quote the script path.
    registered by an earlier `0110`; an unknown index is a protocol error and
    does not reopen a completed session or cancel a countdown.
 
-   **Update the status immediately after each step is actually completed.**
-   Do not wait until the end of the task or batch all `step-done` messages in
-   the final response; the UI and the user need the progress as it happens.
+   **完成一步后立马汇报，实时跟进。** Send `step-done` immediately after
+   each step is actually completed, before starting the next step. Do not wait
+   until the end of the task or batch all `step-done` messages in the final
+   response; the UI and the user need the progress as it happens.
 
 4. If you need a file downloaded, send `download`:
 
@@ -193,6 +194,24 @@ Always quote the script path.
    python "<SKILL_DIR>/scripts/better_shutup_pipe.py" complete --session-id "7f3ac2..." --message "登录流程重构完成，测试通过。"
    ```
 
+## Real-time progress reporting
+
+**完成一步后立马汇报，实时跟进。** Keep the displayed session and plan
+current while you work, not only at the end:
+
+- Send `step-done` immediately after each planned step is actually complete,
+  before starting the next step. Never batch step updates at the end.
+- If a step is long-running, send a short `notify` at meaningful milestones
+  (for example, “analysis complete, starting implementation”). Do not spam
+  progress messages for every small action.
+- If the plan changes, send `plan` as soon as the change is known. Keep the
+  index/step text current.
+- If you are blocked, send `action` immediately; after the user responds, send
+  `resume`. If a real error occurs, send `error` immediately.
+- The user should be able to see which step is current within seconds of it
+  changing. Real-time reporting is part of the task, not an optional final
+  summary.
+
 ## Status code reference
 
 The status field is four bits. The app and this helper use the same values.
@@ -208,7 +227,7 @@ Their Chinese names are, in order: 注册、完成、需要操作、错误、撤
 | `0100` | Resume | `resume` | Acknowledge that the user answered/performed the action | Immediately after the user responds to `0010`. Clears only action-needed and dismisses its card. No new card or sound. |
 | `0101` | Notify | `notify` | Inform the user without asking for action | Progress updates, observations, non-blocking context. Blue auto-close card. If you need an answer, use `0010`; if the task is done, use `0001`. |
 | `0110` | Plan update | `plan` | Create or update plan steps | When you form or revise a plan, including late in the task. Top-level keys are 1-based indices; same index overwrites. Blue auto-close card. |
-| `0111` | Step complete | `step-done` | Mark one existing plan step done | As each step finishes. Requires an index previously sent by `0110`. Does not complete the task. Blue auto-close card. |
+| `0111` | Step complete | `step-done` | Mark one existing plan step done | Report immediately as each step finishes, before starting the next. Requires an index previously sent by `0110`. Does not complete the task. Blue auto-close card. |
 | `1000` | File download | `download` | Download a URL to an absolute local path | When you need a file locally without writing/running a download script. The app downloads in the background; poll the target or `err.err`. Start is logged only; success is a blue card, failure a red card. |
 | `1001`–`1111` | Reserved | — | Future protocol use | Never send these. The current app rejects them. |
 
@@ -293,7 +312,9 @@ complete the parent session.
 ```
 
 - Subagents must mark each plan step with `step-done` as soon as it is actually
-  completed, not only at the end of the subtask.
+  completed, not only at the end of the subtask. They should also send a short
+  `notify` at meaningful milestones in long steps; real-time follow-up is
+  required.
 - The parent must ensure every subagent session completes; a forgotten
   subagent session can block a planned shutdown.
 - If a subagent cannot run the helper (for example, no Python/pipe access), it
@@ -360,8 +381,10 @@ finished. Send complete only when the task is done, not when the conversational
 turn ends. Use action when a user decision is required, and resume after the
 user responds. Plan updates, step completion, informational messages, and file
 downloads are progress signals and never replace the final completion message.
-You may start BetterShutup if it is not running, but never close, kill, or
-restart it, and never cancel a planned shutdown; only the user may do that.
+Send `step-done` immediately after each step and use `notify` at meaningful
+milestones; do not batch progress until the end. You may start BetterShutup if
+it is not running, but never close, kill, or restart it, and never cancel a
+planned shutdown; only the user may do that.
 All subagents must register their own BetterShutup sessions, receive the CLI
 path from the parent, and complete them; a forgotten subagent session can block
 shutdown. Do not register unrelated tasks that the user did not ask to track.

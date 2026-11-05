@@ -5,13 +5,16 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
+import time
 import tkinter as tk
 from typing import Callable
 
 from ..core import NoticeKind
 from ..sounds import SoundPlayer
 from . import theme as colors
+from .animation import FRAME_MS, ease_out_cubic, fade_in_window
 from .theme import Theme, work_area
+from .windowing import enable_drag, enable_fullscreen_toggle, make_borderless
 
 _AUTO_CLOSE_MS = 10_000
 _PREVIEW_LIMIT = 180
@@ -233,8 +236,19 @@ class NotificationCard:
         self.item = item
         self._on_closed = on_closed
         self._closed = False
+        self._closing = False
+        self._shown = False
         self._auto_after: str | None = None
         self._details_open = False
+        self._target_x = 0
+        self._target_y = 0
+        self._anim_after: str | None = None
+        self._anim_token = 0
+        self._current_alpha = 1.0
+        self._progress_after: str | None = None
+        self._progress_started = 0.0
+        self._progress_total_ms = 0
+        self._progress: tk.Frame | None = None
         style = _KIND_STYLE[item.kind]
         self._style = style
         self.width = theme.width
@@ -394,29 +408,142 @@ class NotificationCard:
         )
         action.pack(side="right")
 
+        if bool(style["auto"]):
+            self._progress = tk.Frame(
+                surface,
+                bg=str(style["accent"]),
+                height=self.theme.px(3),
+            )
+            self._progress.place(
+                relx=0,
+                rely=1.0,
+                relwidth=1.0,
+                height=self.theme.px(3),
+                anchor="sw",
+            )
+
         window.bind("<Escape>", lambda _event: self.close())
         window.update_idletasks()
         self.height = max(self.theme.px(128), window.winfo_reqheight())
 
     def show(self) -> None:
-        if self._closed:
+        if self._closed or self._closing or self._shown:
             return
-        self.window.deiconify()
-        self.window.attributes("-topmost", True)
-        self.window.lift()
+        self._shown = True
+        try:
+            self._set_alpha(0.0)
+            start_x = self._target_x + self.width + self.theme.px(24)
+            self.window.geometry(
+                f"{self.width}x{self.height}+{start_x}+{self._target_y}"
+            )
+            self.window.deiconify()
+            self.window.attributes("-topmost", True)
+            self.window.lift()
+        except tk.TclError:
+            self._finish_close()
+            return
+        self._animate_to(
+            self._target_x,
+            self._target_y,
+            1.0,
+            260,
+            on_done=self._after_show,
+        )
+
+    def _after_show(self) -> None:
+        if self._closed or self._closing:
+            return
         if bool(self._style["auto"]):
             self._schedule_auto_close(_AUTO_CLOSE_MS)
 
     def set_position(self, x: int, y: int) -> None:
+        self._target_x = x
+        self._target_y = y
+        if self._closed or self._closing:
+            return
+        if not self._shown:
+            try:
+                self.window.geometry(
+                    f"{self.width}x{self.height}+{x}+{y}"
+                )
+            except tk.TclError:
+                pass
+            return
+        self._animate_to(x, y, 1.0, 180)
+
+    def _animate_to(
+        self,
+        target_x: int,
+        target_y: int,
+        target_alpha: float,
+        duration_ms: int,
+        *,
+        on_done: Callable[[], None] | None = None,
+    ) -> None:
         if self._closed:
             return
-        self.window.geometry(f"{self.width}x{self.height}+{x}+{y}")
+        self._cancel_animation()
+        try:
+            start_x = self.window.winfo_x()
+            start_y = self.window.winfo_y()
+        except tk.TclError:
+            start_x = target_x
+            start_y = target_y
+        start_alpha = self._current_alpha
+        token = self._anim_token
+        started = time.monotonic()
+        duration = max(1, duration_ms) / 1000.0
+
+        def frame() -> None:
+            if self._closed or token != self._anim_token:
+                return
+            progress = min(1.0, (time.monotonic() - started) / duration)
+            eased = ease_out_cubic(progress)
+            x = round(start_x + (target_x - start_x) * eased)
+            y = round(start_y + (target_y - start_y) * eased)
+            alpha = start_alpha + (target_alpha - start_alpha) * eased
+            try:
+                self.window.geometry(
+                    f"{self.width}x{self.height}+{x}+{y}"
+                )
+                self._set_alpha(alpha)
+            except tk.TclError:
+                if on_done is not None:
+                    on_done()
+                return
+            if progress < 1.0:
+                self._anim_after = self.window.after(FRAME_MS, frame)
+            else:
+                self._anim_after = None
+                self._current_alpha = target_alpha
+                if on_done is not None:
+                    on_done()
+
+        self._anim_after = self.window.after(FRAME_MS, frame)
+
+    def _cancel_animation(self) -> None:
+        self._anim_token += 1
+        if self._anim_after is not None:
+            try:
+                self.window.after_cancel(self._anim_after)
+            except tk.TclError:
+                pass
+            self._anim_after = None
+
+    def _set_alpha(self, alpha: float) -> None:
+        self._current_alpha = max(0.0, min(1.0, alpha))
+        try:
+            self.window.attributes("-alpha", self._current_alpha)
+        except tk.TclError:
+            pass
 
     def _schedule_auto_close(self, delay_ms: int) -> None:
         self._cancel_auto_close()
-        if self._closed or self._details_open:
+        if self._closed or self._closing or self._details_open:
             return
         self._auto_after = self.window.after(delay_ms, self.close)
+        if bool(self._style["auto"]):
+            self._start_progress(delay_ms)
 
     def _cancel_auto_close(self) -> None:
         if self._auto_after is not None:
@@ -426,15 +553,58 @@ class NotificationCard:
                 pass
             self._auto_after = None
 
+    def _start_progress(self, duration_ms: int) -> None:
+        if self._progress is None:
+            return
+        self._cancel_progress()
+        self._progress_total_ms = max(1, duration_ms)
+        self._progress_started = time.monotonic()
+        try:
+            self._progress.place_configure(relwidth=1.0)
+            self._progress_after = self.window.after(
+                80, self._progress_tick
+            )
+        except tk.TclError:
+            return
+
+    def _progress_tick(self) -> None:
+        self._progress_after = None
+        if (
+            self._closed
+            or self._closing
+            or self._details_open
+            or self._progress is None
+        ):
+            return
+        elapsed_ms = (time.monotonic() - self._progress_started) * 1000.0
+        remaining = max(0.0, 1.0 - elapsed_ms / self._progress_total_ms)
+        try:
+            self._progress.place_configure(relwidth=remaining)
+            if remaining > 0:
+                self._progress_after = self.window.after(
+                    80, self._progress_tick
+                )
+        except tk.TclError:
+            return
+
+    def _cancel_progress(self) -> None:
+        if self._progress_after is not None:
+            try:
+                self.window.after_cancel(self._progress_after)
+            except tk.TclError:
+                pass
+            self._progress_after = None
+
     def open_details(self) -> None:
-        if self._closed:
+        if self._closed or self._closing:
             return
         self._cancel_auto_close()
+        self._cancel_progress()
         self._details_open = True
 
         def done() -> None:
             self._details_open = False
-            if not self._closed and bool(self._style["auto"]):
+            if not self._closed and not self._closing and bool(self._style["auto"]):
                 self._schedule_auto_close(5_000)
 
         DetailsWindow(
@@ -446,10 +616,29 @@ class NotificationCard:
         )
 
     def close(self) -> None:
+        if self._closed or self._closing:
+            return
+        self._closing = True
+        self._cancel_auto_close()
+        self._cancel_progress()
+        _left, _top, right, _bottom = work_area(self.manager.root)
+        try:
+            y = self.window.winfo_y()
+        except tk.TclError:
+            y = self._target_y
+        self._animate_to(
+            right + self.theme.px(12),
+            y,
+            0.0,
+            190,
+            on_done=self._finish_close,
+        )
+
+    def _finish_close(self) -> None:
         if self._closed:
             return
         self._closed = True
-        self._cancel_auto_close()
+        self._cancel_animation()
         try:
             self.window.destroy()
         except tk.TclError:
@@ -461,7 +650,10 @@ class NotificationCard:
         if self._closed:
             return
         self._closed = True
+        self._closing = True
         self._cancel_auto_close()
+        self._cancel_progress()
+        self._cancel_animation()
         try:
             self.window.destroy()
         except tk.TclError:
@@ -486,6 +678,8 @@ class DetailsWindow:
         self.window = window
         window.title(f"BetterShutup · {title}")
         window.configure(bg=colors.BG)
+        make_borderless(window)
+        enable_fullscreen_toggle(window)
         window.attributes("-topmost", True)
         window.transient(parent)
         window.protocol("WM_DELETE_WINDOW", self.close)
@@ -493,18 +687,40 @@ class DetailsWindow:
 
         header = tk.Frame(window, bg=colors.SURFACE)
         header.pack(fill="x")
-        tk.Label(
+        close_button = tk.Button(
+            header,
+            text="×",
+            command=self.close,
+            font=(theme.family, 15),
+            fg=colors.MUTED,
+            bg=colors.SURFACE,
+            activeforeground=colors.TEXT,
+            activebackground=colors.SURFACE_SUNKEN,
+            relief="flat",
+            borderwidth=0,
+            cursor="hand2",
+            padx=theme.px(6),
+            pady=0,
+        )
+        close_button.pack(
+            side="right",
+            padx=(0, theme.px(14)),
+            pady=(theme.px(10), 0),
+        )
+        title_label = tk.Label(
             header,
             text=title,
             font=theme.section_font,
             fg=colors.TEXT,
             bg=colors.SURFACE,
             anchor="w",
-        ).pack(
+        )
+        title_label.pack(
             side="left",
             padx=(theme.px(18), theme.px(8)),
             pady=(theme.px(14), theme.px(10)),
         )
+        enable_drag(window, header, title_label)
         tk.Frame(window, bg=colors.BORDER, height=1).pack(fill="x")
 
         body = tk.Frame(window, bg=colors.SURFACE)
@@ -557,6 +773,7 @@ class DetailsWindow:
         theme.center(window, width, height)
         window.lift()
         window.focus_set()
+        fade_in_window(window)
 
     def close(self) -> None:
         try:

@@ -10,7 +10,9 @@ from typing import Callable
 from ..config import AppConfig, SOUND_KINDS
 from ..sounds import SoundPlayer, validate_wav_file
 from . import theme as colors
+from .animation import fade_in_window
 from .theme import Theme
+from .windowing import enable_drag, enable_fullscreen_toggle, make_borderless
 
 _DISPLAY_NAMES = {
     "complete": "任务完成（0001）",
@@ -45,6 +47,8 @@ class SettingsDialog:
         self.window = window
         window.title("BetterShutup · 提示音设置")
         window.configure(bg=colors.BG)
+        make_borderless(window)
+        enable_fullscreen_toggle(window)
         window.transient(parent)
         window.resizable(False, False)
         window.protocol("WM_DELETE_WINDOW", self.close)
@@ -52,22 +56,45 @@ class SettingsDialog:
 
         header = tk.Frame(window, bg=colors.SURFACE)
         header.pack(fill="x")
-        tk.Label(
+        close_button = tk.Button(
+            header,
+            text="×",
+            command=self.close,
+            font=(theme.family, 15),
+            fg=colors.MUTED,
+            bg=colors.SURFACE,
+            activeforeground=colors.TEXT,
+            activebackground=colors.SURFACE_SUNKEN,
+            relief="flat",
+            borderwidth=0,
+            cursor="hand2",
+            padx=theme.px(6),
+            pady=0,
+        )
+        close_button.pack(side="right", padx=(0, theme.px(18)), pady=(theme.px(12), 0))
+        title_label = tk.Label(
             header,
             text="提示音设置",
             font=theme.title_font,
             fg=colors.TEXT,
             bg=colors.SURFACE,
             anchor="w",
-        ).pack(anchor="w", padx=theme.px(24), pady=(theme.px(18), theme.px(3)))
-        tk.Label(
+        )
+        title_label.pack(
+            anchor="w", padx=theme.px(24), pady=(theme.px(18), theme.px(3))
+        )
+        subtitle_label = tk.Label(
             header,
             text="四类提示音分别用于完成、需要操作、错误，以及消息/计划/步骤通知。可保留内置合成音，也可以选择自己的 WAV 文件。",
             font=theme.body_font,
             fg=colors.MUTED,
             bg=colors.SURFACE,
             anchor="w",
-        ).pack(anchor="w", padx=theme.px(24), pady=(0, theme.px(16)))
+        )
+        subtitle_label.pack(
+            anchor="w", padx=theme.px(24), pady=(0, theme.px(16))
+        )
+        enable_drag(window, header, title_label, subtitle_label)
         tk.Frame(window, bg=colors.BORDER, height=1).pack(fill="x")
 
         content = tk.Frame(window, bg=colors.BG)
@@ -95,6 +122,7 @@ class SettingsDialog:
         theme.center(window, theme.px(760), window.winfo_reqheight() + theme.px(10))
         window.lift()
         window.focus_set()
+        fade_in_window(window)
 
     def _build_row(self, parent: tk.Misc, kind: str) -> None:
         theme = self.theme

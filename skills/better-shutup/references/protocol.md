@@ -243,7 +243,9 @@ unknown-index `0111` does not reopen a completed session or cancel a countdown.
   cancels the countdown.
 
 **Use when:** a planned step is finished. Send `0111` immediately when each
-step is actually complete; do not batch step updates at the end. Send `0001`
+step is actually complete; do not batch step updates at the end. Real-time
+follow-up is required: long steps may send `0101` at meaningful milestones,
+and plan/action/error changes should be reported as they happen. Send `0001`
 at the end of the whole task.
 
 ### `1000` File download

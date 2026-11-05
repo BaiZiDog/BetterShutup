@@ -33,11 +33,13 @@ from .protocol import Message, ProtocolError, decode_frame
 from .shutdown import perform_shutdown
 from .single_instance import SingleInstance
 from .sounds import SoundPlayer, ensure_default_sounds
+from .ui.animation import fade_in_window
 from .ui.countdown import CountdownWindow
 from .ui.main_window import MainWindow
 from .ui.notifications import NotificationItem, NotificationManager
 from .ui.settings import SettingsDialog
 from .ui.theme import Theme, enable_dpi_awareness
+from .ui.windowing import ensure_taskbar_icon
 
 LOGGER = logging.getLogger("better_shutup")
 
@@ -871,6 +873,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             exit_code = 1
         else:
             root.deiconify()
+            taskbar_icon = (
+                Path(__file__).resolve().parent
+                / "assets"
+                / "BetterShutup.ico"
+            )
+            ensure_taskbar_icon(root, str(taskbar_icon))
+            root.after(
+                120,
+                lambda: ensure_taskbar_icon(root, str(taskbar_icon)),
+            )
+            fade_in_window(root)
             app.run()
     except Exception as exc:
         LOGGER.exception("BetterShutup 发生致命错误")

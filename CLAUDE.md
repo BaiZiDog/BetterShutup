@@ -158,18 +158,30 @@ Keep `protocol.py`, the standalone Skill CLI's framing, and
 
 ### UI and sound
 
-- `ui/main_window.py`: shutdown card, session table, event log, and an
-  in-window plan view. Single-clicking a session row switches the sessions card
-  to that session's plan view; a “返回会话” button returns to the list. The
-  session table has a plan-progress column and uses `action_needed`/`has_error`
-  flags for coloring.
+- `ui/windowing.py`: shared borderless-window, header-drag, taskbar-icon, and
+  F-key fullscreen helpers. F must not fire while focus is in an Entry/Spinbox/
+  Combobox; it toggles fullscreen for main/settings/details windows. Borderless
+  main windows need `WS_EX_APPWINDOW` plus `WM_SETICON` to remain in the
+  taskbar.
+- `ui/animation.py`: ease-out frame helper and window fade-in. Keep animation
+  durations subtle (roughly 180–300 ms) and never block Tk with sleeps.
+- `ui/main_window.py`: borderless shutdown card, session table, event log, and
+  an in-window plan view. It has a custom × close button and draggable header.
+  Single-clicking a session row switches the sessions card to that session's
+  plan view; a “返回会话” button returns to the list. The session table has a
+  plan-progress column and uses `action_needed`/`has_error` flags for coloring.
 - `ui/notifications.py`: borderless topmost cards, bottom-right stacking,
-  completion/message/plan/step/download-success auto-dismiss, long-text detail
-  window. Notify, plan, step-complete, and download-success cards use the blue
-  primary color and the `notify` sound; action, error, and download-failure
-  cards remain manual-close. Download start is log-only.
-- `ui/countdown.py`: topmost countdown/cancel window.
-- `ui/settings.py`: independent WAV overrides and preview for the four sound
+  completion/message/plan/step/download-success auto-dismiss, and a borderless
+  long-text details window with F fullscreen. Cards slide/fade in and out,
+  reposition with ease-out animation, and auto-close cards show a bottom
+  progress line. Notify, plan, step-complete, and download-success cards use
+  the blue primary color and the `notify` sound; action, error, and
+  download-failure cards remain manual-close. Download start is log-only.
+- `ui/countdown.py`: borderless topmost countdown/cancel window. It is always
+  forced fullscreen when created, fades in, and pulses the timer during the
+  last 10 seconds; F does not leave fullscreen.
+- `ui/settings.py`: borderless sound-settings window with F fullscreen and
+  drag-by-header; independent WAV overrides and preview for the four sound
   kinds (`complete`, `action`, `error`, `notify`).
 - `ui/theme.py`: DPI scaling, fonts, colors, ttk styles.
 - `better_shutup/assets/BetterShutup.ico` is the Tk default window icon and the
@@ -218,7 +230,9 @@ Keep `protocol.py`, the standalone Skill CLI's framing, and
   completion is task-based, not conversation-based: `complete` means the task
   is finished, not that a conversational turn ended.
 - Agents must send `step-done` immediately after each plan step is actually
-  completed, not batch the status updates at the end of the task.
+  completed, not batch the status updates at the end of the task. Real-time
+  follow-up is required; long steps should use `notify` at meaningful
+  milestones, and plan/action/error changes must be reported as they happen.
 - Parent agents must give every subagent the absolute helper path and require a
   unique session ID, task-based completion, and the start-only/never-close
   lifecycle rule. Subagents also update step status immediately. The parent
