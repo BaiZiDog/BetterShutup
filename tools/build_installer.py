@@ -39,7 +39,7 @@ def windows_file_version(version: str) -> str:
 
 
 def find_iscc() -> Path:
-    override = os.environ.get("INNO_SETUP_ISCC")
+    override = os.environ.get("INNO_SETUP_ISCC", "").strip().strip('"').strip("'")
     if override:
         path = Path(override).expanduser()
         if path.is_file():
@@ -50,7 +50,7 @@ def find_iscc() -> Path:
 
     for name in ("ISCC.exe", "iscc"):
         found = shutil.which(name)
-        if found:
+        if found and Path(found).is_absolute():
             return Path(found)
 
     for env_name in ("ProgramFiles", "ProgramFiles(x86)"):
@@ -89,8 +89,8 @@ def find_iscc() -> Path:
         pass
 
     raise FileNotFoundError(
-        "Inno Setup 6 ISCC.exe not found. Set INNO_SETUP_ISCC or install "
-        "Inno Setup 6."
+        "Inno Setup 6.3+ ISCC.exe not found. Set INNO_SETUP_ISCC or install "
+        "Inno Setup 6.3+."
     )
 
 

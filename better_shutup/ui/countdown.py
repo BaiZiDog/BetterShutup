@@ -16,6 +16,17 @@ def _force_fullscreen(window: tk.Misc) -> None:
     try:
         window.update_idletasks()
         window.attributes("-fullscreen", True)
+    except tk.TclError:
+        # Keep the countdown usable even if a Tk build rejects fullscreen.
+        try:
+            window.overrideredirect(True)
+            window.geometry(
+                f"{window.winfo_screenwidth()}x"
+                f"{window.winfo_screenheight()}+0+0"
+            )
+        except tk.TclError:
+            pass
+    try:
         window.attributes("-topmost", True)
         window.lift()
     except tk.TclError:

@@ -160,6 +160,7 @@ class BetterShutupApp:
         self._countdown_after: str | None = None
         self._shutdown_watchdog_after: str | None = None
         self._countdown_window: CountdownWindow | None = None
+        self._settings_dialog: SettingsDialog | None = None
         self._firing = False
         self._closing = False
         self._started = False
@@ -725,11 +726,8 @@ class BetterShutupApp:
 
     def _open_path(self, path: Path) -> None:
         try:
-            if path == self.data_dir:
+            if path == self.data_dir and not path.exists():
                 path.mkdir(parents=True, exist_ok=True)
-            else:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.touch(exist_ok=True)
             os.startfile(str(path))
         except OSError as exc:
             LOGGER.exception("打开路径失败: %s", path)
@@ -741,7 +739,16 @@ class BetterShutupApp:
     def open_settings(self) -> None:
         if self._closing:
             return
-        SettingsDialog(
+        if self._settings_dialog is not None:
+            try:
+                if self._settings_dialog.window.winfo_exists():
+                    self._settings_dialog.window.lift()
+                    self._settings_dialog.window.focus_set()
+                    return
+            except tk.TclError:
+                pass
+            self._settings_dialog = None
+        self._settings_dialog = SettingsDialog(
             parent=self.root,
             theme=self.theme,
             config=self.config,

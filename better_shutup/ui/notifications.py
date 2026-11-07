@@ -239,6 +239,7 @@ class NotificationCard:
         self._shown = False
         self._auto_after: str | None = None
         self._details_open = False
+        self._details_window: DetailsWindow | None = None
         self._target_x = 0
         self._target_y = 0
         self._anim_after: str | None = None
@@ -491,14 +492,7 @@ class NotificationCard:
         duration = max(1, duration_ms) / 1000.0
 
         def finish() -> None:
-            if on_done is None:
-                return
-            # ``on_done`` may destroy this Toplevel.  Run it from the root
-            # event loop so Tkinter finishes cleaning up this frame callback
-            # before the window's Tcl commands are cleared.
-            try:
-                self.manager.root.after_idle(on_done)
-            except tk.TclError:
+            if on_done is not None:
                 on_done()
 
         def frame() -> None:
@@ -603,22 +597,39 @@ class NotificationCard:
     def open_details(self) -> None:
         if self._closed or self._closing:
             return
+        if self._details_window is not None:
+            try:
+                if self._details_window.window.winfo_exists():
+                    self._details_window.window.lift()
+                    self._details_window.window.focus_set()
+                    return
+            except tk.TclError:
+                pass
+            self._details_window = None
+
         self._cancel_auto_close()
         self._cancel_progress()
-        self._details_open = True
 
         def done() -> None:
+            self._details_window = None
             self._details_open = False
             if not self._closed and not self._closing and bool(self._style["auto"]):
                 self._schedule_auto_close(5_000)
 
-        DetailsWindow(
-            parent=self.manager.root,
-            theme=self.theme,
-            title=self.item.title or str(self._style["title"]),
-            text=self._full_text or "（无消息内容）",
-            on_close=done,
-        )
+        try:
+            window = DetailsWindow(
+                parent=self.manager.root,
+                theme=self.theme,
+                title=self.item.title or str(self._style["title"]),
+                text=self._full_text or "（无消息内容）",
+                on_close=done,
+            )
+        except Exception:
+            if not self._closed and not self._closing and bool(self._style["auto"]):
+                self._schedule_auto_close(5_000)
+            raise
+        self._details_open = True
+        self._details_window = window
 
     def close(self) -> None:
         if self._closed or self._closing:
@@ -644,12 +655,20 @@ class NotificationCard:
             return
         self._closed = True
         self._cancel_animation()
+        self._on_closed(self)
+        # Defer only the Toplevel teardown.  Destroying it synchronously from
+        # its own animation callback triggers a Tkinter _tclCommands cleanup
+        # bug; manager state is already updated above.
+        try:
+            self.manager.root.after_idle(self._destroy_window)
+        except tk.TclError:
+            self._destroy_window()
+
+    def _destroy_window(self) -> None:
         try:
             self.window.destroy()
         except tk.TclError:
             pass
-        finally:
-            self._on_closed(self)
 
     def destroy(self) -> None:
         if self._closed:

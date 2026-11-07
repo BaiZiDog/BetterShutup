@@ -17,7 +17,7 @@ The desktop app and the Agent Skill are independent deliveries:
 - `skills/better-shutup/` is portable across Claude Code, DSH, and TRAE. Its
   `scripts/better_shutup_pipe.py` must stay standalone (standard library only,
   no imports from the desktop package) and must match the app's wire format.
-- `installer/BetterShutup.iss` is the Inno Setup 6 installer script.
+- `installer/BetterShutup.iss` is the Inno Setup 6.3+ installer script.
 - `tools/install_skill.py` installs the skill into the per-agent skill roots.
 - `tools/build_exe.py` is the Nuitka build entry point.
 - `tools/build_installer.py` builds the per-user Inno Setup installer.
@@ -209,7 +209,7 @@ Keep `protocol.py`, the standalone Skill CLI's framing, and
   data directory and marks it `uninsneveruninstall`, so upgrades and uninstalls
   preserve configuration, logs, and sounds.
 - `installer/BetterShutup.iss` installs per-user to
-  `%LOCALAPPDATA%\Programs\BetterShutup` with Inno Setup 6. Keep its version
+  `%LOCALAPPDATA%\Programs\BetterShutup` with Inno Setup 6.3+. Keep its version
   aligned with `better_shutup/__init__.py`; `build_installer.py` passes the
   version at build time.
 

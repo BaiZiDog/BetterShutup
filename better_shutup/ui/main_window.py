@@ -86,7 +86,7 @@ class MainWindow:
         height = theme.px(760)
         left, top, right, bottom = work_area(root)
         available_w = max(theme.px(640), right - left - theme.px(32))
-        available_h = max(theme.px(500), bottom - top - theme.px(32))
+        available_h = max(theme.px(500), bottom - top - theme.px(80))
         width = min(width, available_w)
         height = min(height, available_h)
         root.minsize(

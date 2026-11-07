@@ -327,8 +327,10 @@ class Theme:
         left, top, right, bottom = work_area(self.root)
         available_width = right - left
         available_height = bottom - top
-        width = min(width, max(self.px(320), available_width - self.px(24)))
-        height = min(height, max(self.px(200), available_height - self.px(24)))
+        width = min(width, max(self.px(320), available_width - self.px(32)))
+        # Reserve room for the native title bar and border, which are outside
+        # the Tk client geometry returned by wm geometry.
+        height = min(height, max(self.px(200), available_height - self.px(80)))
         x = left + max(0, (available_width - width) // 2)
         y = top + max(0, (available_height - height) // 2)
         window.geometry(f"{width}x{height}+{x}+{y}")

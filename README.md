@@ -4,7 +4,7 @@
 
 仓库：<https://github.com/BaiZiDog/BetterShutup>
 
-> ⚠️ **正式版 1.0.0。** 真实关机流程仍可能受 Windows、权限和正在运行的应用影响。首次使用请先执行 `--dry-run`，不要在无人值守或含重要任务的机器上直接启用真实关机。
+> ⚠️ **正式版 1.0.1。** 真实关机流程仍可能受 Windows、权限和正在运行的应用影响。首次使用请先执行 `--dry-run`，不要在无人值守或含重要任务的机器上直接启用真实关机。
 
 BetterShutup 是一个 Windows 多 Agent 协同工具：Agent 通过命名管道注册任务，汇报完成/需要操作/错误/普通消息，上报或更新执行计划与步骤进度，还可以让应用把 URL 文件下载到本地绝对路径；桌面应用用置顶卡片和不同音效提醒你，还可以在同一窗口查看某个会话的计划。当你开启“计划关机”后，所有已注册会话都完成时自动倒计时关机。
 
@@ -14,7 +14,7 @@ BetterShutup 是一个 Windows 多 Agent 协同工具：Agent 通过命名管道
 - 通信：Windows 消息模式命名管道，`\\.\pipe\BetterShutup`。
 - 确认过的协议：4 字节头，低 4 位状态码 + 3 字节大端 JSON 长度；`1000` 为文件下载，`1001`–`1111` 预留给后续使用。
 - 可选单文件构建：Nuitka 原生可执行文件，见“编译单文件 EXE”。
-- 安装版：Inno Setup 6 安装包，按当前用户安装，提供开始菜单/桌面快捷方式和卸载程序。
+- 安装版：Inno Setup 6.3+ 安装包，按当前用户安装，提供开始菜单/桌面快捷方式和卸载程序。
 - 日志与数据：主窗口右上角“日志”可直接打开日志文件；“设置 → 数据与日志”可查看并打开数据目录和日志文件。
 
 ## 快速开始
@@ -39,8 +39,8 @@ python -m better_shutup
 
 ### 安装版
 
-从 Release 下载 `BetterShutup-1.0.0-setup.exe` 并按向导安装；也可以使用本地构建的
-`dist\BetterShutup-1.0.0-setup.exe`。
+从 Release 下载 `BetterShutup-1.0.1-setup.exe` 并按向导安装；也可以使用本地构建的
+`dist\BetterShutup-1.0.1-setup.exe`。
 
 - 默认按当前用户安装到 `%LOCALAPPDATA%\Programs\BetterShutup`，无需管理员权限。
 - 数据目录为 `%LOCALAPPDATA%\BetterShutup`，卸载应用时保留，便于升级和保留配置。
@@ -306,7 +306,7 @@ dist\SHA256SUMS.txt
 
 ## 编译安装包
 
-安装包使用 Inno Setup 6 构建。先完成上面的 EXE 构建，再执行：
+安装包使用 Inno Setup 6.3+ 构建。先完成上面的 EXE 构建，再执行：
 
 ```text
 build-installer.bat
@@ -322,9 +322,9 @@ python tools/build_installer.py
 `INNO_SETUP_ISCC` 环境变量指定。脚本会从 `better_shutup\__init__.py` 读取版本号，生成：
 
 ```text
-dist\BetterShutup-1.0.0-setup.exe
+dist\BetterShutup-1.0.1-setup.exe
 dist\SHA256SUMS.txt
-dist\SHA256SUMS-1.0.0.txt
+dist\SHA256SUMS-1.0.1.txt
 ```
 
 安装包默认按当前用户安装，不要求管理员权限；开始菜单包含应用、数据目录和卸载程序，桌面快捷方式为可选项。

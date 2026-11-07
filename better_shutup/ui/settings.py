@@ -53,7 +53,7 @@ class SettingsDialog:
         window.title("BetterShutup · 设置")
         window.configure(bg=colors.BG)
         window.transient(parent)
-        window.resizable(False, False)
+        window.resizable(False, True)
         window.protocol("WM_DELETE_WINDOW", self.close)
         window.bind("<Escape>", lambda _event: self.close())
 
@@ -83,39 +83,15 @@ class SettingsDialog:
         )
         tk.Frame(window, bg=colors.BORDER, height=1).pack(fill="x")
 
-        notebook = ttk.Notebook(window)
-        notebook.pack(
-            fill="both",
-            expand=True,
-            padx=theme.px(24),
-            pady=(theme.px(16), theme.px(8)),
-        )
-        sound_tab = tk.Frame(notebook, bg=colors.BG)
-        data_tab = tk.Frame(notebook, bg=colors.BG)
-        notebook.add(sound_tab, text="提示音")
-        notebook.add(data_tab, text="数据与日志")
-
-        sound_content = tk.Frame(sound_tab, bg=colors.BG)
-        sound_content.pack(
-            fill="both",
-            expand=True,
-            padx=theme.px(10),
-            pady=theme.px(12),
-        )
-        data_content = tk.Frame(data_tab, bg=colors.BG)
-        data_content.pack(
-            fill="both",
-            expand=True,
-            padx=theme.px(10),
-            pady=theme.px(12),
-        )
-
-        for kind in SOUND_KINDS:
-            self._build_row(sound_content, kind)
-        self._build_data_section(data_content)
-
+        # Pack the action buttons before the expanding notebook so they remain
+        # mapped even when a high-DPI work area clamps the dialog height.
         buttons = tk.Frame(window, bg=colors.BG)
-        buttons.pack(fill="x", padx=theme.px(24), pady=(0, theme.px(20)))
+        buttons.pack(
+            side="bottom",
+            fill="x",
+            padx=theme.px(24),
+            pady=(theme.px(8), theme.px(20)),
+        )
         ttk.Button(
             buttons,
             text="取消",
@@ -129,11 +105,75 @@ class SettingsDialog:
             command=self._save,
         ).pack(side="right", padx=(0, theme.px(10)))
 
+        notebook = ttk.Notebook(window)
+        notebook.pack(
+            fill="both",
+            expand=True,
+            padx=theme.px(24),
+            pady=(theme.px(16), theme.px(8)),
+        )
+        sound_content = self._scrollable_tab(notebook, "提示音")
+        data_content = self._scrollable_tab(notebook, "数据与日志")
+
+        for kind in SOUND_KINDS:
+            self._build_row(sound_content, kind)
+        self._build_data_section(data_content)
+
         window.update_idletasks()
         theme.center(window, theme.px(760), window.winfo_reqheight() + theme.px(10))
         window.lift()
         window.focus_set()
         fade_in_window(window)
+
+    def _scrollable_tab(
+        self, notebook: ttk.Notebook, title: str
+    ) -> tk.Frame:
+        """Add a vertically scrollable tab and return its content frame."""
+
+        theme = self.theme
+        tab = tk.Frame(notebook, bg=colors.BG)
+        canvas = tk.Canvas(
+            tab,
+            bg=colors.BG,
+            highlightthickness=0,
+            borderwidth=0,
+            height=theme.px(520),
+        )
+        scrollbar = ttk.Scrollbar(
+            tab,
+            orient="vertical",
+            command=canvas.yview,
+            style="Vertical.TScrollbar",
+        )
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        inner = tk.Frame(canvas, bg=colors.BG)
+        window_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        content = tk.Frame(inner, bg=colors.BG)
+        content.pack(
+            fill="both",
+            expand=True,
+            padx=theme.px(10),
+            pady=theme.px(12),
+        )
+
+        def sync_scrollregion(_event=None) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def sync_width(event) -> None:
+            canvas.itemconfigure(window_id, width=event.width)
+
+        def scroll(event) -> None:
+            canvas.yview_scroll(int(-event.delta / 120), "units")
+
+        inner.bind("<Configure>", sync_scrollregion)
+        content.bind("<Configure>", sync_scrollregion)
+        canvas.bind("<Configure>", sync_width)
+        canvas.bind("<MouseWheel>", scroll)
+        notebook.add(tab, text=title)
+        return content
 
     def _build_data_section(self, parent: tk.Misc) -> None:
         theme = self.theme
