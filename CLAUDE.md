@@ -264,6 +264,10 @@ after it; preserve that pairing when editing. The parity tests in
   requires an explicit `--session-id`. Errors always print JSON.
 - The public repository is maintained as `BaiZiDog/BetterShutup` under the
   GNU General Public License v3.0, GPL-3.0-only (`LICENSE`, `NOTICE`).
+  `LICENSE` is bilingual with Chinese first and the corresponding English
+  paragraph after each Chinese paragraph; the English text is authoritative.
+  The Inno Setup `LicenseFile` must keep pointing at this file so the installer
+  displays the same bilingual license.
 
 没有我的要求先不提交仓库
 

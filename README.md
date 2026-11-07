@@ -333,6 +333,8 @@ dist\SHA256SUMS-1.0.1.txt
 
 本项目使用 [GNU General Public License v3.0](LICENSE)（GPL-3.0-only）。
 
+`LICENSE` 提供中英双语 GPLv3 文本：中文译文在前，英文原版逐段对应。中文译文由开放原子开源基金会组织翻译，属于非官方译文，仅供参考；只有英文原版具有法律效力。安装程序的许可证页面使用同一份文件。
+
 对应源码即本仓库；分发编译产物时请同时遵守 GPLv3 的源码提供要求。
 
 ## Agent Skill 兼容性参考
