@@ -111,7 +111,9 @@ atomic target-file replacement, failure leaves the old target untouched and
 appends `err.err` in the target directory. `1001`–`1111` remain reserved.
 
 Keep `protocol.py`, the standalone Skill CLI's framing, and
-`skills/better-shutup/references/protocol.md` in sync. The parity tests in
+`skills/better-shutup/references/protocol.md` in sync. The protocol reference is
+bilingual with Chinese first and the corresponding English paragraph directly
+after it; preserve that pairing when editing. The parity tests in
 `tests/test_skill_client.py` are the guardrail.
 
 ### Windows pipe and threading

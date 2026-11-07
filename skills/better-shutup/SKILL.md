@@ -393,5 +393,5 @@ shutdown. Do not register unrelated tasks that the user did not ask to track.
 This keeps sessions intentional and prevents stale sessions from blocking a
 planned shutdown.
 
-See `references/protocol.md` for the exact wire format, per-status semantics,
+See `references/protocol.md` (bilingual, Chinese first) for the exact wire format, per-status semantics,
 and examples used by the helper.
