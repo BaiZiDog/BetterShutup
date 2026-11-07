@@ -15,7 +15,6 @@ from ..core import (
 from ..protocol import Status
 from . import theme as colors
 from .theme import Theme, work_area
-from .windowing import enable_drag, enable_fullscreen_toggle, make_borderless
 
 _LEVEL_COLORS = {
     "info": colors.TEXT_SOFT,
@@ -51,6 +50,7 @@ class MainWindow:
         on_remove_selected: Callable[[str], None],
         on_clear_completed: Callable[[], None],
         on_settings: Callable[[], None],
+        on_open_log: Callable[[], None],
         on_close: Callable[[], None],
         on_countdown_changed: Callable[[int], None],
     ) -> None:
@@ -62,6 +62,7 @@ class MainWindow:
         self._on_remove_selected = on_remove_selected
         self._on_clear_completed = on_clear_completed
         self._on_settings = on_settings
+        self._on_open_log = on_open_log
         self._on_close = on_close
         self._on_countdown_changed = on_countdown_changed
         self._countdown_seconds = countdown_seconds
@@ -77,12 +78,10 @@ class MainWindow:
         root.title("BetterShutup")
         root.configure(bg=colors.BG)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
-        make_borderless(root)
         root.option_add("*TCombobox*Listbox.font", theme.body_font)
         root.option_add("*tearOff", False)
 
         self._build()
-        enable_fullscreen_toggle(root)
         width = theme.px(1080)
         height = theme.px(760)
         left, top, right, bottom = work_area(root)
@@ -142,9 +141,8 @@ class MainWindow:
             bg=colors.HEADER_BG,
         )
         subtitle_label.pack(side="left")
-        dry_label = None
         if self.dry_run:
-            dry_label = tk.Label(
+            tk.Label(
                 subtitle,
                 text="演练模式",
                 font=theme.small_bold,
@@ -152,8 +150,7 @@ class MainWindow:
                 bg="#3B2F14",
                 padx=theme.px(7),
                 pady=theme.px(1),
-            )
-            dry_label.pack(side="left", padx=(theme.px(10), 0))
+            ).pack(side="left", padx=(theme.px(10), 0))
 
         right = tk.Frame(header, bg=colors.HEADER_BG)
         right.pack(side="right", padx=theme.px(24), pady=theme.px(16))
@@ -189,29 +186,20 @@ class MainWindow:
         )
         self._status_label.pack(side="left")
 
+        log_button = ttk.Button(
+            top_right,
+            text="日志",
+            style="Header.TButton",
+            command=self._on_open_log,
+        )
+        log_button.pack(side="left", padx=(theme.px(16), 0))
         settings_button = ttk.Button(
             top_right,
-            text="提示音设置",
+            text="设置",
             style="Header.TButton",
             command=self._on_settings,
         )
-        settings_button.pack(side="left", padx=(theme.px(16), 0))
-        close_button = tk.Button(
-            top_right,
-            text="×",
-            command=self._on_close,
-            font=(theme.family, 15),
-            fg=colors.HEADER_MUTED,
-            bg=colors.HEADER_BG,
-            activeforeground=colors.HEADER_TEXT,
-            activebackground=colors.HEADER_BG_ALT,
-            relief="flat",
-            borderwidth=0,
-            cursor="hand2",
-            padx=theme.px(6),
-            pady=0,
-        )
-        close_button.pack(side="left", padx=(theme.px(8), 0))
+        settings_button.pack(side="left", padx=(theme.px(8), 0))
 
         self._pipe_label = tk.Label(
             right,
@@ -222,17 +210,6 @@ class MainWindow:
             anchor="e",
         )
         self._pipe_label.pack(anchor="e", pady=(theme.px(4), 0))
-
-        drag_handles: list[tk.Misc] = [
-            header,
-            left,
-            title_label,
-            subtitle,
-            subtitle_label,
-        ]
-        if dry_label is not None:
-            drag_handles.append(dry_label)
-        enable_drag(self.root, *drag_handles)
 
     def _build_plan_card(self, parent: tk.Misc) -> None:
         theme = self.theme

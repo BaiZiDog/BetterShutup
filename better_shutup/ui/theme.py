@@ -133,7 +133,7 @@ class Theme:
         self.title_font = (self.family, 20, "bold")
         self.subtitle_font = (self.family, 10)
         self.section_font = (self.family, 11, "bold")
-        self.timer_font = (self.family, 40, "bold")
+        self.timer_font = (self.family, 72, "bold")
         self.card_title_font = (self.family, 11, "bold")
         self.mono_small = (self.mono_family, 9)
         self._style = ttk.Style(root)
@@ -253,6 +253,24 @@ class Theme:
         )
 
         style.configure(
+            "TNotebook",
+            background=BG,
+            borderwidth=0,
+            tabmargins=(0, 0, 0, 0),
+        )
+        style.configure(
+            "TNotebook.Tab",
+            background=SURFACE_SUNKEN,
+            foreground=MUTED,
+            padding=(self.px(14), self.px(6)),
+            font=self.body_bold,
+        )
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", SURFACE), ("active", SURFACE_ALT)],
+            foreground=[("selected", TEXT), ("active", TEXT_SOFT)],
+        )
+        style.configure(
             "Treeview",
             background=SURFACE,
             fieldbackground=SURFACE,
@@ -305,9 +323,7 @@ class Theme:
             padding=(self.px(7), self.px(4)),
             font=self.body_font,
         )
-    def center(
-        self, window: tk.Misc, width: int, height: int, *, top_bias: float = 0.0
-    ) -> None:
+    def center(self, window: tk.Misc, width: int, height: int) -> None:
         left, top, right, bottom = work_area(self.root)
         available_width = right - left
         available_height = bottom - top
@@ -315,5 +331,4 @@ class Theme:
         height = min(height, max(self.px(200), available_height - self.px(24)))
         x = left + max(0, (available_width - width) // 2)
         y = top + max(0, (available_height - height) // 2)
-        y = int(y + height * top_bias)
         window.geometry(f"{width}x{height}+{x}+{y}")

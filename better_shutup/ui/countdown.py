@@ -1,4 +1,4 @@
-"""Topmost shutdown countdown window."""
+"""Topmost fullscreen shutdown countdown window."""
 
 from __future__ import annotations
 
@@ -8,7 +8,18 @@ from typing import Callable
 from . import theme as colors
 from .animation import fade_in_window
 from .theme import Theme
-from .windowing import force_fullscreen, make_borderless
+
+
+def _force_fullscreen(window: tk.Misc) -> None:
+    """Use Tk's native fullscreen mode so Windows covers the taskbar."""
+
+    try:
+        window.update_idletasks()
+        window.attributes("-fullscreen", True)
+        window.attributes("-topmost", True)
+        window.lift()
+    except tk.TclError:
+        pass
 
 
 class CountdownWindow:
@@ -31,19 +42,30 @@ class CountdownWindow:
         window = tk.Toplevel(parent)
         self.window = window
         window.title("BetterShutup · 计划关机")
-        window.configure(bg=colors.BG)
-        make_borderless(window)
-        window.attributes("-topmost", True)
-        window.resizable(False, False)
+        window.configure(bg=colors.HEADER_BG)
         window.protocol("WM_DELETE_WINDOW", self._cancel)
 
+        card_width = min(
+            theme.px(580),
+            window.winfo_screenwidth() - theme.px(64),
+        )
+        card_height = min(
+            theme.px(390),
+            window.winfo_screenheight() - theme.px(64),
+        )
         card = tk.Frame(
             window,
             bg=colors.SURFACE,
             highlightbackground=colors.BORDER,
             highlightthickness=1,
         )
-        card.pack(fill="both", expand=True, padx=theme.px(16), pady=theme.px(16))
+        card.place(
+            relx=0.5,
+            rely=0.5,
+            anchor="center",
+            width=card_width,
+            height=card_height,
+        )
 
         header = tk.Frame(card, bg=colors.DANGER_SOFT)
         header.pack(fill="x")
@@ -83,8 +105,14 @@ class CountdownWindow:
                 padx=theme.px(14),
             ).pack(side="right")
 
+        content_width = card_width - theme.px(80)
         content = tk.Frame(card, bg=colors.SURFACE)
-        content.pack(fill="both", expand=True, padx=theme.px(24), pady=(theme.px(16), theme.px(18)))
+        content.place(
+            relx=0.5,
+            rely=0.5,
+            anchor="center",
+            width=content_width,
+        )
 
         tk.Label(
             content,
@@ -92,7 +120,7 @@ class CountdownWindow:
             font=theme.section_font,
             fg=colors.TEXT,
             bg=colors.SURFACE,
-            anchor="w",
+            anchor="center",
         ).pack(fill="x")
 
         self.time_label = tk.Label(
@@ -101,9 +129,9 @@ class CountdownWindow:
             font=theme.timer_font,
             fg=colors.DANGER,
             bg=colors.SURFACE,
-            anchor="w",
+            anchor="center",
         )
-        self.time_label.pack(fill="x", pady=(theme.px(2), theme.px(2)))
+        self.time_label.pack(fill="x", pady=(theme.px(4), theme.px(4)))
 
         self.detail_label = tk.Label(
             content,
@@ -111,14 +139,14 @@ class CountdownWindow:
             font=theme.body_font,
             fg=colors.MUTED,
             bg=colors.SURFACE,
-            anchor="w",
-            justify="left",
-            wraplength=theme.px(380),
+            anchor="center",
+            justify="center",
+            wraplength=content_width,
         )
         self.detail_label.pack(fill="x")
 
         buttons = tk.Frame(content, bg=colors.SURFACE)
-        buttons.pack(fill="x", pady=(theme.px(16), 0))
+        buttons.pack(fill="x", pady=(theme.px(20), 0))
         self.cancel_button = tk.Button(
             buttons,
             text="取消计划关机",
@@ -134,12 +162,9 @@ class CountdownWindow:
             padx=theme.px(18),
             pady=theme.px(9),
         )
-        self.cancel_button.pack(side="left")
+        self.cancel_button.pack(anchor="center")
 
-        theme.center(window, theme.px(470), theme.px(290), top_bias=-0.10)
-        window.lift()
-        window.attributes("-topmost", True)
-        force_fullscreen(window)
+        _force_fullscreen(window)
         fade_in_window(window)
 
     def update_remaining(self, seconds: int) -> None:

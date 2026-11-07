@@ -6,16 +6,36 @@ from __future__ import annotations
 import argparse
 import hashlib
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 ENTRY = ROOT / "better_shutup" / "BetterShutup.pyw"
+INIT = ROOT / "better_shutup" / "__init__.py"
 OUTPUT_DIR = ROOT / "dist"
 OUTPUT_NAME = "BetterShutup.exe"
 ICON = ROOT / "better_shutup" / "assets" / "BetterShutup.ico"
 DIST_DOCS = ("LICENSE", "NOTICE")
+
+
+def package_version() -> str:
+    match = re.search(
+        r'^__version__\s*=\s*"([^"]+)"',
+        INIT.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    if match is None:
+        raise RuntimeError(f"could not read __version__ from {INIT}")
+    return match.group(1)
+
+
+VERSION = package_version()
+_FILE_PARTS = [part for part in VERSION.split(".") if part]
+while len(_FILE_PARTS) < 4:
+    _FILE_PARTS.append("0")
+FILE_VERSION = ".".join(_FILE_PARTS[:4])
 
 
 def build_command(*, assume_downloads: bool) -> list[str]:
@@ -35,8 +55,8 @@ def build_command(*, assume_downloads: bool) -> list[str]:
         f"--windows-icon-from-ico={ICON}",
         "--company-name=BaiZiDog",
         "--product-name=BetterShutup",
-        "--file-version=0.4.0.0",
-        "--product-version=0.4.0.0",
+        f"--file-version={FILE_VERSION}",
+        f"--product-version={FILE_VERSION}",
         "--file-description=BetterShutup agent shutdown coordinator",
         "--copyright=Copyright 2026 BaiZiDog",
         str(ENTRY),

@@ -4,7 +4,7 @@
 
 仓库：<https://github.com/BaiZiDog/BetterShutup>
 
-> ⚠️ **早期开发阶段，尚未经过完整测试。** 真实关机流程可能受 Windows、权限和正在运行的应用影响。首次使用请先执行 `--dry-run`，不要在无人值守或含重要任务的机器上直接启用真实关机。
+> ⚠️ **正式版 1.0.0。** 真实关机流程仍可能受 Windows、权限和正在运行的应用影响。首次使用请先执行 `--dry-run`，不要在无人值守或含重要任务的机器上直接启用真实关机。
 
 BetterShutup 是一个 Windows 多 Agent 协同工具：Agent 通过命名管道注册任务，汇报完成/需要操作/错误/普通消息，上报或更新执行计划与步骤进度，还可以让应用把 URL 文件下载到本地绝对路径；桌面应用用置顶卡片和不同音效提醒你，还可以在同一窗口查看某个会话的计划。当你开启“计划关机”后，所有已注册会话都完成时自动倒计时关机。
 
@@ -14,6 +14,8 @@ BetterShutup 是一个 Windows 多 Agent 协同工具：Agent 通过命名管道
 - 通信：Windows 消息模式命名管道，`\\.\pipe\BetterShutup`。
 - 确认过的协议：4 字节头，低 4 位状态码 + 3 字节大端 JSON 长度；`1000` 为文件下载，`1001`–`1111` 预留给后续使用。
 - 可选单文件构建：Nuitka 原生可执行文件，见“编译单文件 EXE”。
+- 安装版：Inno Setup 6 安装包，按当前用户安装，提供开始菜单/桌面快捷方式和卸载程序。
+- 日志与数据：主窗口右上角“日志”可直接打开日志文件；“设置 → 数据与日志”可查看并打开数据目录和日志文件。
 
 ## 快速开始
 
@@ -34,6 +36,16 @@ python -m better_shutup
 ```
 
 构建后的独立程序为 `dist\BetterShutup.exe`，不需要本机安装 Python。
+
+### 安装版
+
+从 Release 下载 `BetterShutup-1.0.0-setup.exe` 并按向导安装；也可以使用本地构建的
+`dist\BetterShutup-1.0.0-setup.exe`。
+
+- 默认按当前用户安装到 `%LOCALAPPDATA%\Programs\BetterShutup`，无需管理员权限。
+- 数据目录为 `%LOCALAPPDATA%\BetterShutup`，卸载应用时保留，便于升级和保留配置。
+- 安装程序提供开始菜单快捷方式，桌面快捷方式为可选项，并可在安装完成后直接启动。
+- 安装或升级前建议先关闭正在运行的 BetterShutup，避免单实例检查阻止新版本启动。
 
 `start-debug.bat` 会保留控制台，适合排查启动问题。
 
@@ -74,7 +86,7 @@ python tools/install_skill.py --scope user --agents claude,dsh
 2. 让 Agent 使用 `better-shutup` Skill。阅读/审查文档、浏览/搜索目录或使用本 Skill 时，Agent 默认在任务开始时注册会话；可随时上报计划（`0110`），并用 `1000` 让应用下载文件到本地绝对路径。**每完成一个计划步骤就立即发送 `0111` 更新状态，实时跟进，不要等到最后批量补报；长步骤可在关键节点用 `0101` 汇报进度。** 任务真正完成时才发送完成消息（`0001`），不按对话轮次结束判定。所有子 Agent 也应各自注册会话并完成。应用只接收消息，不向 Agent 回发；CLI 输出只是本地进程输出。
 3. 单击主窗口中的会话行，会在同一窗口切换到该会话的“执行计划”视图；点击“返回会话”回到列表。计划更新和步骤完成会实时刷新。
 4. 在主窗口点“开启计划关机”。全部已注册会话完成时开始倒计时；倒计时期间若有新会话注册，本次倒计时会取消并等待新会话完成。
-5. 倒计时窗口置顶显示剩余时间，随时可点“取消计划关机”。
+5. 倒计时窗口强制全屏显示剩余时间，随时可点“取消计划关机”。
 6. 主窗口可移除失联会话、清除已完成会话，避免过期会话阻塞计划。
 
 ## 通知
@@ -94,18 +106,15 @@ python tools/install_skill.py --scope user --agents claude,dsh
 - 卡片位于主屏工作区右下角，置顶、不占用任务栏，可堆叠。
 - 较长内容在卡片中截断，点击“查看完整内容”可打开完整文本窗口。
 - 同一时间最多显示约 4 张卡片，其余排队；完成状态卡片会自动让出位置。
-- 音效按队列顺序播放，避免连续消息互相打断。可在“提示音设置”中分别试听、替换或恢复内置音效。
+- 音效按队列顺序播放，避免连续消息互相打断。可在“设置 → 提示音”中分别试听、替换或恢复内置音效。
 
 ## 窗口行为
 
-- 所有应用窗口无原生标题栏/边框；主窗口、提示音设置、完整内容窗口和关机倒计时均使用自绘界面。
-- 主窗口仍保留任务栏按钮和图标（通过 `WS_EX_APPWINDOW` + `WM_SETICON`），无边框不会让应用从任务栏消失。
-- 主窗口、提示音设置和完整内容窗口按 **F** 切换全屏；焦点在输入框/下拉框/数值框时 F 仍用于输入。
-- **关机倒计时窗口强制全屏**；倒计时窗口中的“取消计划关机”和右上角 × 始终可用。
-- 主窗口和设置/详情窗口可通过拖动标题区域移动；右上角 × 关闭当前窗口。
+- 主窗口使用 Windows 原生标题栏、边框和任务栏按钮；设置和完整内容窗口使用原生标题栏/边框，并作为主窗口的临时对话框，不单独占任务栏。窗口不再无边框，也不再用 F 键切换全屏。
+- **关机倒计时窗口强制全屏**：使用原生全屏属性覆盖任务栏和窗口边框，居中显示倒计时卡片；“取消计划关机”和右上角 × 始终可用。
+- 通知卡片仍是无边框置顶临时窗口，不占用任务栏。
 - 通知卡片从右侧滑入并淡入，关闭时滑出淡出，卡片堆叠位置平滑过渡；自动关闭卡片底部有剩余时间进度线。
 - 关机倒计时窗口淡入，最后 10 秒数字轻微脉冲；主窗口、设置、详情窗口启动时淡入。
-- 通知卡片本身是无边框临时窗口，不参与 F 全屏切换。
 - 系统原生确认对话框（例如退出确认）仍由 Windows 绘制。
 
 ## 计划关机
@@ -214,7 +223,10 @@ python "<SKILL_DIR>/scripts/better_shutup_pipe.py" download  --session-id "<id>"
 
 - `config.json`：倒计时秒数、四个音效覆盖路径。
 - `sounds\complete.wav` / `action.wav` / `error.wav` / `notify.wav`：首次启动自动生成的内置音效。
-- `better-shutup.log`：UTF-8 轮转日志。
+- `better-shutup.log`：UTF-8 轮转日志，记录启动参数、管道、会话事件、错误和关机流程。
+
+主窗口右上角的“日志”按钮会直接打开日志文件；“设置 → 数据与日志”会显示数据目录和日志文件路径，并提供“打开数据目录”和“打开日志文件”按钮。安装版使用同一个
+`%LOCALAPPDATA%\BetterShutup` 数据目录，卸载时不会删除其中的配置、日志和音效。
 
 可用环境变量/参数隔离数据：
 
@@ -256,8 +268,10 @@ better_shutup/        桌面应用（协议、核心状态机、Win32 管道、T
   assets/             应用图标（ICO）
 assets/               图标源图与导出的 PNG
 skills/better-shutup/ 标准 Agent Skill + 独立 CLI + 协议说明
+installer/BetterShutup.iss  Inno Setup 6 安装脚本
 tools/install_skill.py
 tools/build_exe.py    Nuitka 单文件构建脚本
+tools/build_installer.py  Inno Setup 安装包构建脚本
 tests/
 要求.md
 ```
@@ -289,6 +303,31 @@ dist\SHA256SUMS.txt
 构建参数：Nuitka `--onefile`、`--zig`、Tkinter 插件、Windows GUI 模式（无控制台）、应用图标 `--windows-icon-from-ico`，并通过 `--include-package-data=better_shutup` 打包窗口图标。首次构建会安装/准备 Zig 工具链，耗时较长；如果自动下载失败，可先执行 `python -m pip install ziglang`，再重新运行 `python tools/build_exe.py`。
 
 说明：Nuitka 将 Python 编译为原生机器码，其代码生成链路以 C 为后端，并不是把项目重写成手写 C++；这里交付的是原生单文件 Windows 可执行程序。
+
+## 编译安装包
+
+安装包使用 Inno Setup 6 构建。先完成上面的 EXE 构建，再执行：
+
+```text
+build-installer.bat
+```
+
+或者：
+
+```text
+python tools/build_installer.py
+```
+
+`build_installer.py` 会自动从 `PATH`、常见安装目录或注册表查找 `ISCC.exe`；也可以通过
+`INNO_SETUP_ISCC` 环境变量指定。脚本会从 `better_shutup\__init__.py` 读取版本号，生成：
+
+```text
+dist\BetterShutup-1.0.0-setup.exe
+dist\SHA256SUMS.txt
+dist\SHA256SUMS-1.0.0.txt
+```
+
+安装包默认按当前用户安装，不要求管理员权限；开始菜单包含应用、数据目录和卸载程序，桌面快捷方式为可选项。
 
 ## 许可证
 

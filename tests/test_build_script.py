@@ -4,6 +4,8 @@ import importlib.util
 from pathlib import Path
 import sys
 
+from better_shutup import __version__
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "tools" / "build_exe.py"
 
@@ -28,6 +30,9 @@ def test_build_command_has_required_nuitka_flags() -> None:
     assert any(
         arg.startswith("--windows-icon-from-ico=") for arg in command
     )
+    assert module.VERSION == __version__
+    assert f"--file-version={module.FILE_VERSION}" in command
+    assert f"--product-version={module.FILE_VERSION}" in command
     assert module.ICON.is_file()
     assert str(module.ENTRY) in command
     assert command[-1].endswith("BetterShutup.pyw")

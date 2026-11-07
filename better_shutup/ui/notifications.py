@@ -14,7 +14,6 @@ from ..sounds import SoundPlayer
 from . import theme as colors
 from .animation import FRAME_MS, ease_out_cubic, fade_in_window
 from .theme import Theme, work_area
-from .windowing import enable_drag, enable_fullscreen_toggle, make_borderless
 
 _AUTO_CLOSE_MS = 10_000
 _PREVIEW_LIMIT = 180
@@ -447,16 +446,13 @@ class NotificationCard:
             self._target_y,
             1.0,
             260,
-            on_done=self._after_show,
         )
-
-    def _after_show(self) -> None:
-        if self._closed or self._closing:
-            return
         if bool(self._style["auto"]):
             self._schedule_auto_close(_AUTO_CLOSE_MS)
 
     def set_position(self, x: int, y: int) -> None:
+        if x == self._target_x and y == self._target_y:
+            return
         self._target_x = x
         self._target_y = y
         if self._closed or self._closing:
@@ -494,6 +490,17 @@ class NotificationCard:
         started = time.monotonic()
         duration = max(1, duration_ms) / 1000.0
 
+        def finish() -> None:
+            if on_done is None:
+                return
+            # ``on_done`` may destroy this Toplevel.  Run it from the root
+            # event loop so Tkinter finishes cleaning up this frame callback
+            # before the window's Tcl commands are cleared.
+            try:
+                self.manager.root.after_idle(on_done)
+            except tk.TclError:
+                on_done()
+
         def frame() -> None:
             if self._closed or token != self._anim_token:
                 return
@@ -508,16 +515,14 @@ class NotificationCard:
                 )
                 self._set_alpha(alpha)
             except tk.TclError:
-                if on_done is not None:
-                    on_done()
+                finish()
                 return
             if progress < 1.0:
                 self._anim_after = self.window.after(FRAME_MS, frame)
             else:
                 self._anim_after = None
                 self._current_alpha = target_alpha
-                if on_done is not None:
-                    on_done()
+                finish()
 
         self._anim_after = self.window.after(FRAME_MS, frame)
 
@@ -673,13 +678,12 @@ class DetailsWindow:
         self.parent = parent
         self.theme = theme
         self._on_close = on_close
+        self._closed = False
 
         window = tk.Toplevel(parent)
         self.window = window
         window.title(f"BetterShutup · {title}")
         window.configure(bg=colors.BG)
-        make_borderless(window)
-        enable_fullscreen_toggle(window)
         window.attributes("-topmost", True)
         window.transient(parent)
         window.protocol("WM_DELETE_WINDOW", self.close)
@@ -687,26 +691,6 @@ class DetailsWindow:
 
         header = tk.Frame(window, bg=colors.SURFACE)
         header.pack(fill="x")
-        close_button = tk.Button(
-            header,
-            text="×",
-            command=self.close,
-            font=(theme.family, 15),
-            fg=colors.MUTED,
-            bg=colors.SURFACE,
-            activeforeground=colors.TEXT,
-            activebackground=colors.SURFACE_SUNKEN,
-            relief="flat",
-            borderwidth=0,
-            cursor="hand2",
-            padx=theme.px(6),
-            pady=0,
-        )
-        close_button.pack(
-            side="right",
-            padx=(0, theme.px(14)),
-            pady=(theme.px(10), 0),
-        )
         title_label = tk.Label(
             header,
             text=title,
@@ -720,7 +704,6 @@ class DetailsWindow:
             padx=(theme.px(18), theme.px(8)),
             pady=(theme.px(14), theme.px(10)),
         )
-        enable_drag(window, header, title_label)
         tk.Frame(window, bg=colors.BORDER, height=1).pack(fill="x")
 
         body = tk.Frame(window, bg=colors.SURFACE)
@@ -776,6 +759,9 @@ class DetailsWindow:
         fade_in_window(window)
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         try:
             self.window.destroy()
         finally:

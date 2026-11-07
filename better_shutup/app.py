@@ -39,7 +39,6 @@ from .ui.main_window import MainWindow
 from .ui.notifications import NotificationItem, NotificationManager
 from .ui.settings import SettingsDialog
 from .ui.theme import Theme, enable_dpi_awareness
-from .ui.windowing import ensure_taskbar_icon
 
 LOGGER = logging.getLogger("better_shutup")
 
@@ -176,6 +175,7 @@ class BetterShutupApp:
             on_remove_selected=self.remove_session,
             on_clear_completed=self.clear_completed,
             on_settings=self.open_settings,
+            on_open_log=self.open_log,
             on_close=self.request_close,
             on_countdown_changed=self.change_countdown,
         )
@@ -189,6 +189,8 @@ class BetterShutupApp:
         self._log("info", f"BetterShutup v{__version__} 已启动。")
         if self.dry_run:
             self._log("warning", "当前为演练模式：倒计时结束后不会真正关机。")
+        self._log("info", f"数据目录: {self.data_dir}")
+        self._log("info", f"日志文件: {log_path(self.data_dir)}")
         self._log("info", f"命名管道: {self.pipe_name}")
 
     # ------------------------------------------------------------- lifecycle
@@ -716,6 +718,26 @@ class BetterShutupApp:
         self._apply_transition(transition)
         self._sync_state()
 
+    def open_log(self) -> None:
+        if self._closing:
+            return
+        self._open_path(log_path(self.data_dir))
+
+    def _open_path(self, path: Path) -> None:
+        try:
+            if path == self.data_dir:
+                path.mkdir(parents=True, exist_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch(exist_ok=True)
+            os.startfile(str(path))
+        except OSError as exc:
+            LOGGER.exception("打开路径失败: %s", path)
+            self._notify_system_error(
+                "无法打开",
+                f"{path}\n\n{exc}",
+            )
+
     def open_settings(self) -> None:
         if self._closing:
             return
@@ -725,6 +747,9 @@ class BetterShutupApp:
             config=self.config,
             default_sounds=self.default_sounds,
             sound_player=self.sound_player,
+            data_dir=self.data_dir,
+            log_file=log_path(self.data_dir),
+            on_open_path=self._open_path,
             on_save=self.save_sound_settings,
         )
 
@@ -873,16 +898,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             exit_code = 1
         else:
             root.deiconify()
-            taskbar_icon = (
-                Path(__file__).resolve().parent
-                / "assets"
-                / "BetterShutup.ico"
-            )
-            ensure_taskbar_icon(root, str(taskbar_icon))
-            root.after(
-                120,
-                lambda: ensure_taskbar_icon(root, str(taskbar_icon)),
-            )
             fade_in_window(root)
             app.run()
     except Exception as exc:

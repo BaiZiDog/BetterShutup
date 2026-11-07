@@ -17,8 +17,10 @@ The desktop app and the Agent Skill are independent deliveries:
 - `skills/better-shutup/` is portable across Claude Code, DSH, and TRAE. Its
   `scripts/better_shutup_pipe.py` must stay standalone (standard library only,
   no imports from the desktop package) and must match the app's wire format.
+- `installer/BetterShutup.iss` is the Inno Setup 6 installer script.
 - `tools/install_skill.py` installs the skill into the per-agent skill roots.
 - `tools/build_exe.py` is the Nuitka build entry point.
+- `tools/build_installer.py` builds the per-user Inno Setup installer.
 
 Runtime code has no third-party dependencies. pytest and Nuitka/Zig are
 development/build dependencies declared in `pyproject.toml`.
@@ -47,12 +49,20 @@ python -m pip install -e ".[build]"
 python tools/build_exe.py
 # equivalent convenience wrapper: build.bat
 # output: dist/BetterShutup.exe
+
+# Build the Inno Setup 6 installer (after the EXE exists)
+python tools/build_installer.py
+# equivalent convenience wrapper: build-installer.bat
+# output: dist/BetterShutup-<version>-setup.exe
 ```
 
 Nuitka compiles the entry point with `--onefile`, the tk-inter plugin, Zig as
 the C compiler (required for Python 3.13), and the Windows GUI console mode
 disabled. Build options live only in `tools/build_exe.py`; keep them there
-rather than duplicating long command lines in docs or CI.
+rather than duplicating long command lines in docs or CI. `build_exe.py` reads
+the version from `better_shutup/__init__.py`; keep `pyproject.toml` in sync.
+`build_installer.py` locates `ISCC.exe` from `INNO_SETUP_ISCC`, `PATH`, common
+install directories, or the Inno Setup 6 uninstall registry entry.
 
 There is no configured linter/formatter. For non-trivial changes, use the
 available `code-review` skill and then the `simplify` skill where appropriate,
@@ -158,31 +168,35 @@ Keep `protocol.py`, the standalone Skill CLI's framing, and
 
 ### UI and sound
 
-- `ui/windowing.py`: shared borderless-window, header-drag, taskbar-icon, and
-  F-key fullscreen helpers. F must not fire while focus is in an Entry/Spinbox/
-  Combobox; it toggles fullscreen for main/settings/details windows. Borderless
-  main windows need `WS_EX_APPWINDOW` plus `WM_SETICON` to remain in the
-  taskbar.
 - `ui/animation.py`: ease-out frame helper and window fade-in. Keep animation
   durations subtle (roughly 180–300 ms) and never block Tk with sleeps.
-- `ui/main_window.py`: borderless shutdown card, session table, event log, and
-  an in-window plan view. It has a custom × close button and draggable header.
-  Single-clicking a session row switches the sessions card to that session's
-  plan view; a “返回会话” button returns to the list. The session table has a
-  plan-progress column and uses `action_needed`/`has_error` flags for coloring.
+- `ui/main_window.py`: decorated main window with native title bar, border, and
+  taskbar button; shutdown card, session table, event log, and an in-window
+  plan view. Single-clicking a session row switches the sessions card to that
+  session's plan view; a “返回会话” button returns to the list. The session
+  table has a plan-progress column and uses `action_needed`/`has_error` flags
+  for coloring. The header has “日志” and “设置” buttons; “日志” opens the
+  rotated file log in the default text editor.
 - `ui/notifications.py`: borderless topmost cards, bottom-right stacking,
-  completion/message/plan/step/download-success auto-dismiss, and a borderless
-  long-text details window with F fullscreen. Cards slide/fade in and out,
-  reposition with ease-out animation, and auto-close cards show a bottom
-  progress line. Notify, plan, step-complete, and download-success cards use
-  the blue primary color and the `notify` sound; action, error, and
-  download-failure cards remain manual-close. Download start is log-only.
-- `ui/countdown.py`: borderless topmost countdown/cancel window. It is always
-  forced fullscreen when created, fades in, and pulses the timer during the
-  last 10 seconds; F does not leave fullscreen.
-- `ui/settings.py`: borderless sound-settings window with F fullscreen and
-  drag-by-header; independent WAV overrides and preview for the four sound
-  kinds (`complete`, `action`, `error`, `notify`).
+  completion/message/plan/step/download-success auto-dismiss, and a decorated
+  long-text details window. Cards slide/fade in and out, reposition with
+  ease-out animation, and auto-close cards show a bottom progress line. Notify,
+  plan, step-complete, and download-success cards use the blue primary color
+  and the `notify` sound; action, error, and download-failure cards remain
+  manual-close. Download start is log-only. `_animate_to` defers its `on_done`
+  callback to the root event loop; destroying a notification Toplevel
+  synchronously inside its own `after` callback triggers a Tkinter
+  `_tclCommands` cleanup bug. Auto-close is scheduled when the card is shown,
+  not when its slide-in animation ends, so a stacking animation cannot drop
+  the timer.
+- `ui/countdown.py`: decorated countdown/cancel window forced into native
+  fullscreen, covering the taskbar, with a centered card; it fades in and
+  pulses the timer during the last 10 seconds.
+- `ui/settings.py`: decorated settings window (transient, no taskbar button)
+  with “提示音” and “数据与日志” tabs. The sound tab has independent WAV
+  overrides and preview for the four kinds (`complete`, `action`, `error`,
+  `notify`); the data tab shows the data directory and log file and opens
+  either through Explorer or the default file association.
 - `ui/theme.py`: DPI scaling, fonts, colors, ttk styles.
 - `better_shutup/assets/BetterShutup.ico` is the Tk default window icon and the
   Nuitka `--windows-icon-from-ico` source. The source PNG lives under `assets/`;
@@ -190,7 +204,14 @@ Keep `protocol.py`, the standalone Skill CLI's framing, and
 - `sounds.py`: deterministic built-in WAV generation plus a serialized playback
   worker. Do not play sounds synchronously on the Tk thread.
 - `config.py` stores settings/sounds/logs under `%LOCALAPPDATA%\BetterShutup`
-  by default; environment/CLI overrides are used by tests and dry runs.
+  by default; environment/CLI overrides are used by tests and dry runs. The
+  settings window exposes the data and log paths. The installer creates the same
+  data directory and marks it `uninsneveruninstall`, so upgrades and uninstalls
+  preserve configuration, logs, and sounds.
+- `installer/BetterShutup.iss` installs per-user to
+  `%LOCALAPPDATA%\Programs\BetterShutup` with Inno Setup 6. Keep its version
+  aligned with `better_shutup/__init__.py`; `build_installer.py` passes the
+  version at build time.
 
 ### Safety invariants
 

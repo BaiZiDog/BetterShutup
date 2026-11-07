@@ -1,4 +1,4 @@
-"""Sound settings dialog."""
+"""Settings dialog for sounds, data directory, and logs."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from ..sounds import SoundPlayer, validate_wav_file
 from . import theme as colors
 from .animation import fade_in_window
 from .theme import Theme
-from .windowing import enable_drag, enable_fullscreen_toggle, make_borderless
 
 _DISPLAY_NAMES = {
     "complete": "任务完成（0001）",
@@ -31,6 +30,9 @@ class SettingsDialog:
         config: AppConfig,
         default_sounds: dict[str, Path],
         sound_player: SoundPlayer | None,
+        data_dir: Path,
+        log_file: Path,
+        on_open_path: Callable[[Path], None],
         on_save: Callable[[dict[str, str | None]], None],
     ) -> None:
         self.parent = parent
@@ -38,6 +40,9 @@ class SettingsDialog:
         self.config = config
         self.default_sounds = default_sounds
         self.sound_player = sound_player
+        self.data_dir = data_dir
+        self.log_file = log_file
+        self._on_open_path = on_open_path
         self._on_save = on_save
         self._closed = False
         self._vars: dict[str, tk.StringVar] = {}
@@ -45,10 +50,8 @@ class SettingsDialog:
 
         window = tk.Toplevel(parent)
         self.window = window
-        window.title("BetterShutup · 提示音设置")
+        window.title("BetterShutup · 设置")
         window.configure(bg=colors.BG)
-        make_borderless(window)
-        enable_fullscreen_toggle(window)
         window.transient(parent)
         window.resizable(False, False)
         window.protocol("WM_DELETE_WINDOW", self.close)
@@ -56,25 +59,9 @@ class SettingsDialog:
 
         header = tk.Frame(window, bg=colors.SURFACE)
         header.pack(fill="x")
-        close_button = tk.Button(
-            header,
-            text="×",
-            command=self.close,
-            font=(theme.family, 15),
-            fg=colors.MUTED,
-            bg=colors.SURFACE,
-            activeforeground=colors.TEXT,
-            activebackground=colors.SURFACE_SUNKEN,
-            relief="flat",
-            borderwidth=0,
-            cursor="hand2",
-            padx=theme.px(6),
-            pady=0,
-        )
-        close_button.pack(side="right", padx=(0, theme.px(18)), pady=(theme.px(12), 0))
         title_label = tk.Label(
             header,
-            text="提示音设置",
+            text="设置",
             font=theme.title_font,
             fg=colors.TEXT,
             bg=colors.SURFACE,
@@ -85,7 +72,7 @@ class SettingsDialog:
         )
         subtitle_label = tk.Label(
             header,
-            text="四类提示音分别用于完成、需要操作、错误，以及消息/计划/步骤通知。可保留内置合成音，也可以选择自己的 WAV 文件。",
+            text="提示音、数据目录与日志位置。配置、日志和内置音效都保存在数据目录中。",
             font=theme.body_font,
             fg=colors.MUTED,
             bg=colors.SURFACE,
@@ -94,14 +81,38 @@ class SettingsDialog:
         subtitle_label.pack(
             anchor="w", padx=theme.px(24), pady=(0, theme.px(16))
         )
-        enable_drag(window, header, title_label, subtitle_label)
         tk.Frame(window, bg=colors.BORDER, height=1).pack(fill="x")
 
-        content = tk.Frame(window, bg=colors.BG)
-        content.pack(fill="both", expand=True, padx=theme.px(24), pady=theme.px(18))
+        notebook = ttk.Notebook(window)
+        notebook.pack(
+            fill="both",
+            expand=True,
+            padx=theme.px(24),
+            pady=(theme.px(16), theme.px(8)),
+        )
+        sound_tab = tk.Frame(notebook, bg=colors.BG)
+        data_tab = tk.Frame(notebook, bg=colors.BG)
+        notebook.add(sound_tab, text="提示音")
+        notebook.add(data_tab, text="数据与日志")
+
+        sound_content = tk.Frame(sound_tab, bg=colors.BG)
+        sound_content.pack(
+            fill="both",
+            expand=True,
+            padx=theme.px(10),
+            pady=theme.px(12),
+        )
+        data_content = tk.Frame(data_tab, bg=colors.BG)
+        data_content.pack(
+            fill="both",
+            expand=True,
+            padx=theme.px(10),
+            pady=theme.px(12),
+        )
 
         for kind in SOUND_KINDS:
-            self._build_row(content, kind)
+            self._build_row(sound_content, kind)
+        self._build_data_section(data_content)
 
         buttons = tk.Frame(window, bg=colors.BG)
         buttons.pack(fill="x", padx=theme.px(24), pady=(0, theme.px(20)))
@@ -123,6 +134,105 @@ class SettingsDialog:
         window.lift()
         window.focus_set()
         fade_in_window(window)
+
+    def _build_data_section(self, parent: tk.Misc) -> None:
+        theme = self.theme
+        card = tk.Frame(
+            parent,
+            bg=colors.SURFACE,
+            highlightbackground=colors.BORDER,
+            highlightthickness=1,
+        )
+        card.pack(fill="x", pady=(0, theme.px(14)))
+        card.grid_columnconfigure(1, weight=1)
+
+        tk.Label(
+            card,
+            text="数据与日志",
+            font=theme.section_font,
+            fg=colors.TEXT,
+            bg=colors.SURFACE,
+            anchor="w",
+        ).grid(
+            row=0,
+            column=0,
+            columnspan=2,
+            sticky="w",
+            padx=theme.px(14),
+            pady=(theme.px(12), theme.px(7)),
+        )
+
+        rows = (
+            ("数据目录", self.data_dir),
+            ("日志文件", self.log_file),
+        )
+        for row, (label, path) in enumerate(rows, start=1):
+            tk.Label(
+                card,
+                text=label,
+                font=theme.small_bold,
+                fg=colors.MUTED,
+                bg=colors.SURFACE,
+                anchor="nw",
+            ).grid(
+                row=row,
+                column=0,
+                sticky="nw",
+                padx=(theme.px(14), theme.px(10)),
+                pady=theme.px(2),
+            )
+            tk.Label(
+                card,
+                text=str(path),
+                font=theme.mono_small,
+                fg=colors.TEXT_SOFT,
+                bg=colors.SURFACE,
+                anchor="w",
+                justify="left",
+                wraplength=theme.px(600),
+            ).grid(
+                row=row,
+                column=1,
+                sticky="w",
+                padx=(0, theme.px(14)),
+                pady=theme.px(2),
+            )
+
+        actions = tk.Frame(card, bg=colors.SURFACE)
+        actions.grid(
+            row=3,
+            column=0,
+            columnspan=2,
+            sticky="w",
+            padx=theme.px(14),
+            pady=(theme.px(9), theme.px(8)),
+        )
+        self._small_button(
+            actions,
+            "打开数据目录",
+            lambda: self._on_open_path(self.data_dir),
+        ).pack(side="left")
+        self._small_button(
+            actions,
+            "打开日志文件",
+            lambda: self._on_open_path(self.log_file),
+        ).pack(side="left", padx=(theme.px(6), 0))
+
+        tk.Label(
+            card,
+            text="卸载应用不会删除数据目录。",
+            font=theme.small_font,
+            fg=colors.MUTED,
+            bg=colors.SURFACE,
+            anchor="w",
+        ).grid(
+            row=4,
+            column=0,
+            columnspan=2,
+            sticky="w",
+            padx=theme.px(14),
+            pady=(0, theme.px(10)),
+        )
 
     def _build_row(self, parent: tk.Misc, kind: str) -> None:
         theme = self.theme
