@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from typing import Callable, Sequence
 
 from ..core import (
@@ -37,6 +37,17 @@ def _clock_from_seconds(seconds: int) -> str:
     return f"{minutes:02d}:{remainder:02d}"
 
 
+def _duration_text(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours} 小时 {minutes} 分"
+    if minutes:
+        return f"{minutes} 分 {secs} 秒"
+    return f"{secs} 秒"
+
+
 class MainWindow:
     def __init__(
         self,
@@ -51,6 +62,9 @@ class MainWindow:
         on_clear_completed: Callable[[], None],
         on_settings: Callable[[], None],
         on_open_log: Callable[[], None],
+        on_schedule_at: Callable[[datetime], None],
+        on_schedule_after: Callable[[int], None],
+        on_cancel_schedule: Callable[[], None],
         on_close: Callable[[], None],
         on_countdown_changed: Callable[[int], None],
     ) -> None:
@@ -63,6 +77,9 @@ class MainWindow:
         self._on_clear_completed = on_clear_completed
         self._on_settings = on_settings
         self._on_open_log = on_open_log
+        self._on_schedule_at = on_schedule_at
+        self._on_schedule_after = on_schedule_after
+        self._on_cancel_schedule = on_cancel_schedule
         self._on_close = on_close
         self._on_countdown_changed = on_countdown_changed
         self._countdown_seconds = countdown_seconds
@@ -74,6 +91,7 @@ class MainWindow:
         self._planned = False
         self._remaining: int | None = None
         self._firing = False
+        self._schedule_enabled = False
 
         root.title("BetterShutup")
         root.configure(bg=colors.BG)
@@ -83,7 +101,7 @@ class MainWindow:
 
         self._build()
         width = theme.px(1080)
-        height = theme.px(760)
+        height = theme.px(860)
         left, top, right, bottom = work_area(root)
         available_w = max(theme.px(640), right - left - theme.px(32))
         available_h = max(theme.px(500), bottom - top - theme.px(80))
@@ -112,6 +130,7 @@ class MainWindow:
         body.pack(fill="both", expand=True, padx=theme.px(20), pady=theme.px(16))
 
         self._build_plan_card(body)
+        self._build_schedule_card(body)
         self._build_sessions_card(body)
         self._build_log_card(body)
 
@@ -290,6 +309,155 @@ class MainWindow:
         self.plan_button.pack(anchor="e", pady=(theme.px(9), 0))
         self.countdown_spin.bind("<Return>", self._commit_countdown_event)
         self.countdown_spin.bind("<FocusOut>", self._commit_countdown_event)
+
+    def _build_schedule_card(self, parent: tk.Misc) -> None:
+        theme = self.theme
+        card = self._card(parent)
+        card.pack(fill="x", pady=(theme.px(14), 0))
+
+        inner = tk.Frame(card, bg=colors.SURFACE)
+        inner.pack(fill="x", padx=theme.px(18), pady=theme.px(13))
+        inner.grid_columnconfigure(0, weight=1)
+
+        left = tk.Frame(inner, bg=colors.SURFACE)
+        left.grid(row=0, column=0, sticky="nw")
+        tk.Label(
+            left,
+            text="定时关机",
+            font=theme.section_font,
+            fg=colors.TEXT,
+            bg=colors.SURFACE,
+            anchor="w",
+        ).pack(anchor="w")
+        self.schedule_status = tk.Label(
+            left,
+            text="未启用",
+            font=(theme.family, 12, "bold"),
+            fg=colors.MUTED,
+            bg=colors.SURFACE,
+            anchor="w",
+        )
+        self.schedule_status.pack(anchor="w", pady=(theme.px(3), theme.px(2)))
+        self.schedule_hint = tk.Label(
+            left,
+            text="到达指定时间后，若无会话或全部会话已完成，自动关机。",
+            font=theme.small_font,
+            fg=colors.MUTED,
+            bg=colors.SURFACE,
+            anchor="w",
+            justify="left",
+            wraplength=theme.px(560),
+        )
+        self.schedule_hint.pack(anchor="w")
+
+        controls = tk.Frame(inner, bg=colors.SURFACE)
+        controls.grid(row=0, column=1, sticky="ne", padx=(theme.px(20), 0))
+        row = tk.Frame(controls, bg=colors.SURFACE)
+        row.pack(anchor="e")
+
+        self.schedule_mode_var = tk.StringVar(value="指定时间")
+        self.schedule_mode_box = ttk.Combobox(
+            row,
+            textvariable=self.schedule_mode_var,
+            values=("指定时间", "倒计时"),
+            state="readonly",
+            width=9,
+        )
+        self.schedule_mode_box.pack(side="left")
+        self.schedule_mode_box.bind(
+            "<<ComboboxSelected>>", self._on_schedule_mode_changed
+        )
+
+        self.schedule_value_var = tk.StringVar(
+            value=(datetime.now() + timedelta(hours=1)).strftime("%H:%M")
+        )
+        self.schedule_value_entry = ttk.Entry(
+            row,
+            textvariable=self.schedule_value_var,
+            width=8,
+            justify="center",
+        )
+        self.schedule_value_entry.pack(side="left", padx=(theme.px(8), theme.px(6)))
+        self.schedule_value_entry.bind(
+            "<Return>", lambda _event: self._toggle_schedule()
+        )
+        self.schedule_unit = tk.Label(
+            row,
+            text="时:分",
+            font=theme.small_font,
+            fg=colors.MUTED,
+            bg=colors.SURFACE,
+        )
+        self.schedule_unit.pack(side="left")
+
+        self.schedule_button = ttk.Button(
+            controls,
+            text="启用定时关机",
+            style="Secondary.TButton",
+            command=self._toggle_schedule,
+        )
+        self.schedule_button.pack(anchor="e", pady=(theme.px(9), 0))
+
+    def _on_schedule_mode_changed(self, _event=None) -> None:
+        if self.schedule_mode_var.get() == "倒计时":
+            self.schedule_unit.configure(text="分钟")
+            if not self.schedule_value_var.get().strip().isdigit():
+                self.schedule_value_var.set("60")
+        else:
+            self.schedule_unit.configure(text="时:分")
+            self.schedule_value_var.set(
+                (datetime.now() + timedelta(hours=1)).strftime("%H:%M")
+            )
+
+    def _toggle_schedule(self) -> None:
+        if self._schedule_enabled:
+            self._on_cancel_schedule()
+            return
+
+        mode = self.schedule_mode_var.get()
+        raw = self.schedule_value_var.get().strip()
+        if mode == "指定时间":
+            try:
+                target_time = datetime.strptime(raw, "%H:%M").time()
+            except ValueError:
+                messagebox.showerror(
+                    "时间格式无效",
+                    "请输入 HH:MM，例如 23:30。",
+                    parent=self.root,
+                )
+                return
+            target = datetime.combine(datetime.now().date(), target_time)
+            if target <= datetime.now():
+                target += timedelta(days=1)
+            try:
+                self._on_schedule_at(target)
+            except Exception as exc:
+                messagebox.showerror(
+                    "无法启用定时关机",
+                    str(exc),
+                    parent=self.root,
+                )
+            return
+
+        try:
+            minutes = int(raw)
+        except ValueError:
+            minutes = 0
+        if not 1 <= minutes <= 7 * 24 * 60:
+            messagebox.showerror(
+                "分钟数无效",
+                "请输入 1–10080 之间的分钟数。",
+                parent=self.root,
+            )
+            return
+        try:
+            self._on_schedule_after(minutes)
+        except Exception as exc:
+            messagebox.showerror(
+                "无法启用定时关机",
+                str(exc),
+                parent=self.root,
+            )
 
     def _build_sessions_card(self, parent: tk.Misc) -> None:
         theme = self.theme
@@ -522,7 +690,7 @@ class MainWindow:
         )
         self.log_text = tk.Text(
             log_wrap,
-            height=6,
+            height=5,
             wrap="word",
             font=theme.small_font,
             fg=colors.TEXT_SOFT,
@@ -772,6 +940,7 @@ class MainWindow:
         incomplete_count: int,
         remaining: int | None,
         firing: bool,
+        countdown_source: str | None = None,
     ) -> None:
         self._planned = planned
         self._remaining = remaining
@@ -781,6 +950,12 @@ class MainWindow:
             status_text = "正在发起系统关机…"
             status_color = colors.DANGER
             hint = "已向 Windows 发送关机请求。"
+        elif remaining is not None and countdown_source == "schedule":
+            status_text = (
+                f"定时关机倒计时 {_clock_from_seconds(remaining)} · 即将关机"
+            )
+            status_color = colors.WARNING
+            hint = "定时关机时间已到，可在“定时关机”卡片或倒计时窗口中取消。"
         elif planned and remaining is not None:
             status_text = f"倒计时 {_clock_from_seconds(remaining)} · 全部会话已完成"
             status_color = colors.WARNING
@@ -808,19 +983,74 @@ class MainWindow:
 
         self.plan_status.configure(text=status_text, fg=status_color)
         self.plan_hint.configure(text=hint)
-        self.plan_button.configure(
-            text="取消计划关机" if planned else "开启计划关机",
-            style="Danger.TButton" if planned else "Primary.TButton",
-        )
-        if firing:
+        if countdown_source == "schedule" and remaining is not None:
+            self.plan_button.configure(
+                text="定时关机倒计时中",
+                style="Danger.TButton",
+            )
             self.plan_button.state(["disabled"])
         else:
-            self.plan_button.state(["!disabled"])
+            self.plan_button.configure(
+                text="取消计划关机" if planned else "开启计划关机",
+                style="Danger.TButton" if planned else "Primary.TButton",
+            )
+            if firing:
+                self.plan_button.state(["disabled"])
+            else:
+                self.plan_button.state(["!disabled"])
 
         if remaining is not None or firing:
             self.countdown_spin.state(["disabled"])
         else:
             self.countdown_spin.state(["!disabled"])
+
+    def render_schedule(
+        self,
+        *,
+        enabled: bool,
+        mode: str | None,
+        target_wall: datetime | None,
+        remaining: int | None,
+        waiting: bool,
+        countdown_source: str | None,
+        incomplete_count: int,
+    ) -> None:
+        self._schedule_enabled = enabled
+        input_state = ["disabled"] if enabled else ["!disabled"]
+        self.schedule_mode_box.state(input_state)
+        self.schedule_value_entry.state(input_state)
+        self.schedule_button.state(["!disabled"])
+        self.schedule_button.configure(
+            text="取消定时关机" if enabled else "启用定时关机",
+            style="Danger.TButton" if enabled else "Secondary.TButton",
+        )
+
+        if not enabled:
+            status_text = "未启用"
+            status_color = colors.MUTED
+            hint = "到达指定时间后，若无会话或全部会话已完成，自动关机。"
+        elif countdown_source == "schedule":
+            status_text = "已开始关机倒计时"
+            status_color = colors.WARNING
+            hint = "定时关机时间已到，可点击“取消定时关机”停止。"
+        elif waiting:
+            status_text = f"已到时间 · 等待 {incomplete_count} 个会话完成"
+            status_color = colors.WARNING
+            hint = "所有会话完成后自动开始关机倒计时。"
+        elif target_wall is not None:
+            mode_text = "指定时间" if mode == "time" else "倒计时"
+            status_text = (
+                f"已启用 · {mode_text} {target_wall:%m-%d %H:%M} · "
+                f"剩余 {_duration_text(remaining or 0)}"
+            )
+            status_color = colors.PRIMARY
+            hint = "到点后若无会话或全部会话已完成，自动开始关机倒计时。"
+        else:
+            status_text = "已启用"
+            status_color = colors.PRIMARY
+            hint = "等待定时关机时间到达。"
+        self.schedule_status.configure(text=status_text, fg=status_color)
+        self.schedule_hint.configure(text=hint)
 
     def append_log(self, level: str, message: str) -> None:
         if not message:

@@ -6,8 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 BetterShutup is a Windows-only Python/Tkinter application that receives agent
 session messages over a Windows named pipe, shows topmost notifications, and
-optionally shuts the machine down after every registered session completes.
-The repository is public under GPL-3.0-only.
+optionally shuts the machine down after every registered session completes or
+at a user-scheduled time when sessions are idle or complete. The repository is
+public under GPL-3.0-only.
 
 The desktop app and the Agent Skill are independent deliveries:
 
@@ -161,24 +162,38 @@ after it; preserve that pairing when editing. The parity tests in
   success/failure, updates `last_text`, and emits `DOWNLOAD_SUCCESS` or
   `DOWNLOAD_FAILURE`. A failure that arrives after completion reopens the
   session and cancels the countdown.
-- A countdown starts only when the plan is armed, at least one session exists,
-  and all registered sessions are complete. Removing completed sessions does
-  not cancel an already-running countdown.
-- `tick()` is the only path that declares shutdown due; it disarms the plan and
-  fires once. The app then calls `shutdown.perform_shutdown()`.
-- Sessions and plan state are in-memory only; restart starts disarmed.
+- A plan countdown starts only when the plan is armed, at least one session
+  exists, and all registered sessions are complete. Removing completed sessions
+  does not cancel an already-running countdown.
+- `set_schedule()` adds an independent timed trigger: mode `time` (absolute
+  wall-clock target, UI chooses tomorrow if the time has passed) or `delay`
+  (minutes). At the target, `check_schedule()` starts the same countdown only
+  when there are no sessions or all sessions are complete; with incomplete
+  sessions it logs once and waits. New work before or during the target does
+  not disarm the schedule. A scheduled countdown cancelled by new work remains
+  enabled and can start again after the new work completes.
+- `cancel_countdown()` cancels whichever countdown is active and disarms its
+  source (`plan` or `schedule`). Disabling the plan must not cancel a scheduled
+  countdown, and disabling the schedule must not cancel a plan countdown.
+- `tick()` is the only path that declares shutdown due; it cancels if a session
+  is incomplete, otherwise disarms the active source and fires once. The app
+  then calls `shutdown.perform_shutdown()`.
+- Sessions, plan, and schedule state are in-memory only; restart starts
+  disarmed.
 
 ### UI and sound
 
 - `ui/animation.py`: ease-out frame helper and window fade-in. Keep animation
   durations subtle (roughly 180–300 ms) and never block Tk with sleeps.
 - `ui/main_window.py`: decorated main window with native title bar, border, and
-  taskbar button; shutdown card, session table, event log, and an in-window
-  plan view. Single-clicking a session row switches the sessions card to that
-  session's plan view; a “返回会话” button returns to the list. The session
-  table has a plan-progress column and uses `action_needed`/`has_error` flags
-  for coloring. The header has “日志” and “设置” buttons; “日志” opens the
-  rotated file log in the default text editor.
+  taskbar button; plan-shutdown card, scheduled-shutdown card, session table,
+  event log, and an in-window plan view. Single-clicking a session row switches
+  the sessions card to that session's plan view; a “返回会话” button returns to
+  the list. The session table has a plan-progress column and uses
+  `action_needed`/`has_error` flags for coloring. The header has “日志” and
+  “设置” buttons; “日志” opens the rotated file log in the default text editor.
+  The scheduled card supports `HH:MM` targets and 1–10080 minute delays and
+  shows target, remaining time, waiting state, and countdown state.
 - `ui/notifications.py`: borderless topmost cards, bottom-right stacking,
   completion/message/plan/step/download-success auto-dismiss, and a decorated
   long-text details window. Cards slide/fade in and out, reposition with
@@ -193,7 +208,9 @@ after it; preserve that pairing when editing. The parity tests in
   the timer.
 - `ui/countdown.py`: decorated countdown/cancel window forced into native
   fullscreen, covering the taskbar, with a centered card; it fades in and
-  pulses the timer during the last 10 seconds.
+  pulses the timer during the last 10 seconds. Its `reason` selects the
+  “计划关机” or “定时关机” title and message; the cancel button calls
+  `Coordinator.cancel_countdown()` so the active source is disarmed.
 - `ui/settings.py`: decorated settings window (transient, no taskbar button)
   with “提示音” and “数据与日志” tabs. The sound tab has independent WAV
   overrides and preview for the four kinds (`complete`, `action`, `error`,
@@ -220,9 +237,11 @@ after it; preserve that pairing when editing. The parity tests in
 - Automated tests must never run the real shutdown command. Use `--dry-run`,
   injected/monkeypatched shutdown functions, and unit tests. This is a shared
   machine.
-- The countdown is app-owned; selecting the app's close path must cancel it
-  before showing any modal confirmation. Do not schedule a system `shutdown`
-  timer that survives app exit.
+- The countdown is app-owned; selecting the app's close path must cancel the
+  active countdown and disarm both plan and scheduled triggers before showing
+  any modal confirmation. Do not schedule a system `shutdown` timer that
+  survives app exit. Scheduled shutdown state is in-memory only; restarting or
+  crashing the app cancels it.
 - Do not execute or eval text received from the pipe. It is only displayed.
 - Status `1000` allows a local agent to make the app fetch an HTTP(S) URL and
   write the response to an arbitrary absolute path. Keep it restricted to

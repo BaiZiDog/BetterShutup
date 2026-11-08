@@ -41,18 +41,21 @@ class CountdownWindow:
         theme: Theme,
         on_cancel: Callable[[], None],
         dry_run: bool,
+        reason: str = "plan",
     ) -> None:
         self.parent = parent
         self.theme = theme
         self._on_cancel = on_cancel
+        self.reason = reason
         self._closed = False
         self._firing = False
         self._pulse_after: str | None = None
         self._pulse_on = False
 
+        title = "定时关机" if reason == "schedule" else "计划关机"
         window = tk.Toplevel(parent)
         self.window = window
-        window.title("BetterShutup · 计划关机")
+        window.title(f"BetterShutup · {title}")
         window.configure(bg=colors.HEADER_BG)
         window.protocol("WM_DELETE_WINDOW", self._cancel)
 
@@ -82,7 +85,7 @@ class CountdownWindow:
         header.pack(fill="x")
         badge = tk.Label(
             header,
-            text="计划关机",
+            text=title,
             font=theme.small_bold,
             fg=colors.DANGER,
             bg=colors.DANGER_SOFT,
@@ -127,7 +130,11 @@ class CountdownWindow:
 
         tk.Label(
             content,
-            text="全部已注册会话均已完成",
+            text=(
+                "定时关机时间已到"
+                if reason == "schedule"
+                else "全部已注册会话均已完成"
+            ),
             font=theme.section_font,
             fg=colors.TEXT,
             bg=colors.SURFACE,
@@ -160,7 +167,11 @@ class CountdownWindow:
         buttons.pack(fill="x", pady=(theme.px(20), 0))
         self.cancel_button = tk.Button(
             buttons,
-            text="取消计划关机",
+            text=(
+                "取消定时关机"
+                if reason == "schedule"
+                else "取消计划关机"
+            ),
             command=self._cancel,
             font=theme.body_bold,
             fg=colors.DANGER,

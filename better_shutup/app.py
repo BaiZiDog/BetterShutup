@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+from datetime import datetime, timedelta
 import hashlib
 import logging
 from logging.handlers import RotatingFileHandler
@@ -26,7 +27,7 @@ from .config import (
     log_path,
     sounds_dir,
 )
-from .core import Coordinator, NoticeKind, Transition
+from .core import Coordinator, NoticeKind, ScheduleMode, Transition
 from .downloader import DownloadManager
 from .pipe_server import PipeServer
 from .protocol import Message, ProtocolError, decode_frame
@@ -177,6 +178,9 @@ class BetterShutupApp:
             on_clear_completed=self.clear_completed,
             on_settings=self.open_settings,
             on_open_log=self.open_log,
+            on_schedule_at=self.schedule_at,
+            on_schedule_after=self.schedule_after,
+            on_cancel_schedule=self.cancel_schedule,
             on_close=self.request_close,
             on_countdown_changed=self.change_countdown,
         )
@@ -272,9 +276,17 @@ class BetterShutupApp:
         if self._closing:
             return
         had_plan = self.coordinator.planned
+        had_schedule = self.coordinator.schedule_enabled
+        changed = False
         if had_plan:
             transition = self.coordinator.set_planned(False)
             self._apply_transition(transition)
+            changed = True
+        if had_schedule:
+            transition = self.coordinator.set_schedule(False)
+            self._apply_transition(transition)
+            changed = True
+        if changed:
             self._sync_state(refresh_sessions=False)
         elif self.coordinator.deadline is not None:
             self._close_countdown_window()
@@ -283,10 +295,19 @@ class BetterShutupApp:
         if self._firing:
             self._shutdown_app()
             return
-        if had_plan or sessions:
-            if had_plan:
+        if had_plan or had_schedule or sessions:
+            if had_plan and had_schedule:
+                question = (
+                    "已取消计划关机和定时关机。退出后将停止监听，"
+                    "确定关闭 BetterShutup 吗？"
+                )
+            elif had_plan:
                 question = (
                     "已取消计划关机。退出后将停止监听，确定关闭 BetterShutup 吗？"
+                )
+            elif had_schedule:
+                question = (
+                    "已取消定时关机。退出后将停止监听，确定关闭 BetterShutup 吗？"
                 )
             else:
                 pending = self.coordinator.incomplete_count
@@ -349,6 +370,13 @@ class BetterShutupApp:
             return
         try:
             changed = self._drain_events()
+            if not self._firing:
+                schedule_transition = self.coordinator.check_schedule(
+                    time.monotonic()
+                )
+                if schedule_transition.logs:
+                    self._apply_transition(schedule_transition)
+                    changed = True
             if self._drain_downloads():
                 changed = True
             if changed:
@@ -523,25 +551,47 @@ class BetterShutupApp:
         if self._closing:
             return
         coordinator = self.coordinator
-        remaining = coordinator.seconds_remaining(time.monotonic())
+        now = time.monotonic()
+        remaining = coordinator.seconds_remaining(now)
+        source = coordinator.countdown_source
         self.main.render_plan(
             planned=coordinator.planned,
             session_count=len(coordinator.sessions),
             incomplete_count=coordinator.incomplete_count,
             remaining=remaining,
             firing=self._firing,
+            countdown_source=source,
+        )
+        self.main.render_schedule(
+            enabled=coordinator.schedule_enabled,
+            mode=(
+                coordinator.schedule_mode.value
+                if coordinator.schedule_mode is not None
+                else None
+            ),
+            target_wall=coordinator.schedule_target_wall,
+            remaining=coordinator.schedule_seconds_remaining(now),
+            waiting=coordinator.schedule_waiting_for_sessions(now),
+            countdown_source=source,
+            incomplete_count=coordinator.incomplete_count,
         )
         if self._firing:
             if self._countdown_window is not None:
                 self._countdown_window.set_firing()
             return
         if coordinator.deadline is not None:
-            if self._countdown_window is None:
+            reason = "schedule" if source == "schedule" else "plan"
+            if (
+                self._countdown_window is None
+                or self._countdown_window.reason != reason
+            ):
+                self._close_countdown_window()
                 self._countdown_window = CountdownWindow(
                     parent=self.root,
                     theme=self.theme,
                     on_cancel=self.cancel_plan_from_countdown,
                     dry_run=self.dry_run,
+                    reason=reason,
                 )
             self._countdown_window.update_remaining(remaining or 0)
         else:
@@ -672,9 +722,42 @@ class BetterShutupApp:
     def cancel_plan_from_countdown(self) -> None:
         if self._closing or self._firing:
             return
-        transition = self.coordinator.set_planned(
-            False, now=time.monotonic()
+        transition = self.coordinator.cancel_countdown()
+        self._apply_transition(transition)
+        self._sync_state(refresh_sessions=False)
+
+    def schedule_at(self, target: datetime) -> None:
+        if self._closing or self._firing:
+            return
+        delay = (target - datetime.now()).total_seconds()
+        transition = self.coordinator.set_schedule(
+            True,
+            mode=ScheduleMode.TIME,
+            target_wall=target,
+            delay_seconds=delay,
+            now=time.monotonic(),
         )
+        self._apply_transition(transition)
+        self._sync_state(refresh_sessions=False)
+
+    def schedule_after(self, minutes: int) -> None:
+        if self._closing or self._firing:
+            return
+        target = datetime.now() + timedelta(minutes=minutes)
+        transition = self.coordinator.set_schedule(
+            True,
+            mode=ScheduleMode.DELAY,
+            target_wall=target,
+            delay_seconds=minutes * 60,
+            now=time.monotonic(),
+        )
+        self._apply_transition(transition)
+        self._sync_state(refresh_sessions=False)
+
+    def cancel_schedule(self) -> None:
+        if self._closing or self._firing:
+            return
+        transition = self.coordinator.set_schedule(False)
         self._apply_transition(transition)
         self._sync_state(refresh_sessions=False)
 

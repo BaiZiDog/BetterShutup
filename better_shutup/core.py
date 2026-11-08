@@ -14,6 +14,13 @@ from .protocol import Message, Status
 MIN_COUNTDOWN_SECONDS = 5
 MAX_COUNTDOWN_SECONDS = 3600
 DEFAULT_COUNTDOWN_SECONDS = 60
+MIN_SCHEDULE_SECONDS = 1
+MAX_SCHEDULE_SECONDS = 7 * 24 * 60 * 60
+
+
+class ScheduleMode(str, Enum):
+    TIME = "time"
+    DELAY = "delay"
 
 
 class NoticeKind(str, Enum):
@@ -106,6 +113,12 @@ class Coordinator:
         self._sessions: dict[str, Session] = {}
         self._planned = False
         self._deadline: float | None = None
+        self._countdown_source: str | None = None
+        self._schedule_enabled = False
+        self._schedule_mode: ScheduleMode | None = None
+        self._schedule_target_wall: datetime | None = None
+        self._schedule_target: float | None = None
+        self._schedule_wait_logged = False
         self._countdown_seconds = self._clamp_countdown(countdown_seconds)
 
     @property
@@ -123,6 +136,41 @@ class Coordinator:
     @property
     def countdown_seconds(self) -> int:
         return self._countdown_seconds
+
+    @property
+    def countdown_source(self) -> str | None:
+        """Return ``"plan"`` or ``"schedule"`` while a countdown is active."""
+
+        return self._countdown_source
+
+    @property
+    def schedule_enabled(self) -> bool:
+        return self._schedule_enabled
+
+    @property
+    def schedule_mode(self) -> ScheduleMode | None:
+        return self._schedule_mode
+
+    @property
+    def schedule_target_wall(self) -> datetime | None:
+        return self._schedule_target_wall
+
+    def schedule_seconds_remaining(self, now: float | None = None) -> int | None:
+        if not self._schedule_enabled or self._schedule_target is None:
+            return None
+        current = time.monotonic() if now is None else now
+        return max(0, math.ceil(self._schedule_target - current))
+
+    def schedule_waiting_for_sessions(self, now: float | None = None) -> bool:
+        current = time.monotonic() if now is None else now
+        return (
+            self._schedule_enabled
+            and self._schedule_target is not None
+            and current >= self._schedule_target
+            and self._deadline is None
+            and self.has_sessions
+            and not self.all_complete
+        )
 
     @property
     def has_sessions(self) -> bool:
@@ -250,6 +298,8 @@ class Coordinator:
             )
             if self._deadline is not None:
                 self._deadline = None
+                self._countdown_source = None
+                self._schedule_wait_logged = False
                 transition.logs.append("新会话到达，本次关机倒计时已取消。")
             return
 
@@ -445,6 +495,8 @@ class Coordinator:
                 )
                 if self._deadline is not None:
                     self._deadline = None
+                    self._countdown_source = None
+                    self._schedule_wait_logged = False
                     transition.logs.append(
                         "文件下载失败，本次关机倒计时已取消。"
                     )
@@ -482,6 +534,8 @@ class Coordinator:
             )
         if self._deadline is not None:
             self._deadline = None
+            self._countdown_source = None
+            self._schedule_wait_logged = False
             transition.logs.append(
                 f"收到{message.status_name}消息，本次关机倒计时已取消。"
             )
@@ -521,9 +575,13 @@ class Coordinator:
             self._maybe_start_countdown(current, transition)
         else:
             transition.logs.append("已关闭计划关机。")
-            if self._deadline is not None:
+            if (
+                self._deadline is not None
+                and self._countdown_source == "plan"
+            ):
                 self._deadline = None
-                transition.logs.append("本次关机倒计时已取消。")
+                self._countdown_source = None
+                transition.logs.append("本次计划关机倒计时已取消。")
         return transition
 
     def set_countdown_seconds(self, seconds: int) -> Transition:
@@ -552,6 +610,7 @@ class Coordinator:
         )
         if self._deadline is None:
             self._maybe_start_countdown(current, transition)
+            self._maybe_start_scheduled_countdown(current, transition)
         return transition
 
     def clear_completed(self, now: float | None = None) -> Transition:
@@ -569,7 +628,127 @@ class Coordinator:
             )
         if self._deadline is None:
             self._maybe_start_countdown(current, transition)
+            self._maybe_start_scheduled_countdown(current, transition)
         return transition
+
+    # --------------------------------------------------------------- schedule
+    def set_schedule(
+        self,
+        enabled: bool,
+        *,
+        mode: ScheduleMode | str | None = None,
+        target_wall: datetime | None = None,
+        delay_seconds: float = 0,
+        now: float | None = None,
+    ) -> Transition:
+        current = time.monotonic() if now is None else now
+        transition = Transition()
+
+        if not enabled:
+            if not self._schedule_enabled:
+                return transition
+            self._clear_schedule()
+            if self._countdown_source == "schedule":
+                self._deadline = None
+                self._countdown_source = None
+                transition.logs.append("定时关机倒计时已取消。")
+            transition.logs.append("已关闭定时关机。")
+            return transition
+
+        if mode is None or target_wall is None:
+            raise ValueError("启用定时关机需要 mode 和 target_wall")
+        try:
+            schedule_mode = ScheduleMode(mode)
+        except ValueError as exc:
+            raise ValueError(f"未知的定时关机模式: {mode}") from exc
+        if isinstance(delay_seconds, bool) or not isinstance(
+            delay_seconds, (int, float)
+        ):
+            raise ValueError("定时关机延迟必须是数字秒")
+        if not isinstance(target_wall, datetime):
+            raise ValueError("定时关机目标必须是 datetime")
+
+        delay = max(
+            0,
+            min(MAX_SCHEDULE_SECONDS, int(math.ceil(delay_seconds))),
+        )
+        if self._countdown_source == "schedule":
+            self._deadline = None
+            self._countdown_source = None
+            transition.logs.append("原定时关机倒计时已取消。")
+
+        self._schedule_enabled = True
+        self._schedule_mode = schedule_mode
+        self._schedule_target_wall = target_wall
+        self._schedule_target = current + delay
+        self._schedule_wait_logged = False
+        mode_label = "指定时间" if schedule_mode is ScheduleMode.TIME else "延时"
+        transition.logs.append(
+            f"已启用定时关机（{mode_label}）："
+            f"{target_wall:%Y-%m-%d %H:%M}。"
+        )
+        if delay <= 0:
+            self._maybe_start_scheduled_countdown(current, transition)
+        return transition
+
+    def check_schedule(self, now: float | None = None) -> Transition:
+        """Start the countdown when the target time is due and work is idle."""
+
+        current = time.monotonic() if now is None else now
+        transition = Transition()
+        self._maybe_start_scheduled_countdown(current, transition)
+        return transition
+
+    def cancel_countdown(self, now: float | None = None) -> Transition:
+        """Cancel whichever countdown is currently running."""
+
+        if self._deadline is None:
+            return Transition()
+
+        source = self._countdown_source
+        self._deadline = None
+        self._countdown_source = None
+        transition = Transition()
+        if source == "plan":
+            self._planned = False
+            transition.logs.append("已取消计划关机倒计时。")
+        elif source == "schedule":
+            self._clear_schedule()
+            transition.logs.append("已取消定时关机倒计时。")
+        else:
+            transition.logs.append("已取消关机倒计时。")
+        return transition
+
+    def _clear_schedule(self) -> None:
+        self._schedule_enabled = False
+        self._schedule_mode = None
+        self._schedule_target_wall = None
+        self._schedule_target = None
+        self._schedule_wait_logged = False
+
+    def _maybe_start_scheduled_countdown(
+        self, now: float, transition: Transition
+    ) -> None:
+        if (
+            not self._schedule_enabled
+            or self._schedule_target is None
+            or now < self._schedule_target
+            or self._deadline is not None
+        ):
+            return
+        if self._sessions and not self.all_complete:
+            if not self._schedule_wait_logged:
+                self._schedule_wait_logged = True
+                transition.logs.append(
+                    "定时关机时间已到，但仍有 "
+                    f"{self.incomplete_count} 个会话未完成，"
+                    "将等待会话完成后关机。"
+                )
+            return
+        self._schedule_wait_logged = False
+        self._start_countdown(
+            now, "schedule", transition, allow_empty=True
+        )
 
     def tick(self, now: float | None = None) -> Transition:
         current = time.monotonic() if now is None else now
@@ -577,20 +756,61 @@ class Coordinator:
         if self._deadline is None or current < self._deadline:
             return transition
 
-        if not self._planned:
-            self._deadline = None
-            return transition
-
+        source = self._countdown_source
         if any(not session.completed for session in self._sessions.values()):
             self._deadline = None
+            self._countdown_source = None
+            self._schedule_wait_logged = False
             transition.logs.append("仍有未完成会话，本次关机倒计时已取消。")
             return transition
 
         self._deadline = None
-        self._planned = False
+        self._countdown_source = None
+        self._clear_schedule()
+        if source == "plan":
+            self._planned = False
+            transition.logs.append("关机倒计时结束，正在请求系统关机。")
+        elif source == "schedule":
+            transition.logs.append(
+                "定时关机倒计时结束，正在请求系统关机。"
+            )
+        else:
+            transition.logs.append("关机倒计时结束，正在请求系统关机。")
         transition.shutdown_due = True
-        transition.logs.append("关机倒计时结束，正在请求系统关机。")
         return transition
+
+    def _start_countdown(
+        self,
+        now: float,
+        source: str,
+        transition: Transition,
+        *,
+        allow_empty: bool = False,
+    ) -> None:
+        if self._deadline is not None:
+            return
+        if not allow_empty and not self._sessions:
+            return
+        if self._sessions and not self.all_complete:
+            return
+
+        self._deadline = now + self._countdown_seconds
+        self._countdown_source = source
+        if source == "schedule":
+            if self._sessions:
+                transition.logs.append(
+                    "定时关机时间已到，所有会话已完成，将在 "
+                    f"{self._countdown_seconds} 秒后关机。"
+                )
+            else:
+                transition.logs.append(
+                    "定时关机时间已到，当前没有已注册会话，将在 "
+                    f"{self._countdown_seconds} 秒后关机。"
+                )
+        else:
+            transition.logs.append(
+                f"所有会话已完成，将在 {self._countdown_seconds} 秒后关机。"
+            )
 
     def _maybe_start_countdown(
         self, now: float, transition: Transition
@@ -601,10 +821,7 @@ class Coordinator:
             and self._sessions
             and self.all_complete
         ):
-            self._deadline = now + self._countdown_seconds
-            transition.logs.append(
-                f"所有会话已完成，将在 {self._countdown_seconds} 秒后关机。"
-            )
+            self._start_countdown(now, "plan", transition)
 
     @staticmethod
     def _clamp_countdown(seconds: int) -> int:

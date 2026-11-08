@@ -2,10 +2,10 @@
 ; Build with: python tools/build_installer.py
 
 #ifndef AppVersion
-  #define AppVersion "1.0.1"
+  #define AppVersion "1.0.2"
 #endif
 #ifndef AppFileVersion
-  #define AppFileVersion "1.0.1.0"
+  #define AppFileVersion "1.0.2.0"
 #endif
 
 #define AppName "BetterShutup"
