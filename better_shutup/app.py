@@ -40,6 +40,7 @@ from .ui.main_window import MainWindow
 from .ui.notifications import NotificationItem, NotificationManager
 from .ui.settings import SettingsDialog
 from .ui.theme import Theme, enable_dpi_awareness
+from .ui.tray import TrayIcon
 
 LOGGER = logging.getLogger("better_shutup")
 
@@ -162,6 +163,8 @@ class BetterShutupApp:
         self._shutdown_watchdog_after: str | None = None
         self._countdown_window: CountdownWindow | None = None
         self._settings_dialog: SettingsDialog | None = None
+        self._tray_commands: queue.Queue[str] = queue.Queue()
+        self._tray: TrayIcon | None = None
         self._firing = False
         self._closing = False
         self._started = False
@@ -181,7 +184,7 @@ class BetterShutupApp:
             on_schedule_at=self.schedule_at,
             on_schedule_after=self.schedule_after,
             on_cancel_schedule=self.cancel_schedule,
-            on_close=self.request_close,
+            on_close=self.hide_to_tray,
             on_countdown_changed=self.change_countdown,
         )
         self.notifications = NotificationManager(
@@ -218,8 +221,26 @@ class BetterShutupApp:
         self._pipe_stopped_reported = False
         self.main.set_pipe_status(True, "监听中")
         self._log("info", "正在监听 Agent 消息。")
+        self._start_tray()
         self._schedule_poll()
         return True
+
+    def _start_tray(self) -> None:
+        icon_path = (
+            Path(__file__).resolve().parent
+            / "assets"
+            / "BetterShutup.ico"
+        )
+        tray = TrayIcon(icon_path, self._tray_commands)
+        if tray.start():
+            self._tray = tray
+            self._log("info", "系统托盘图标已启用。")
+        else:
+            LOGGER.warning("系统托盘图标启动失败")
+            self._log(
+                "warning",
+                "系统托盘不可用；关闭主窗口将按退出处理。",
+            )
 
     def run(self) -> None:
         self.root.mainloop()
@@ -257,6 +278,12 @@ class BetterShutupApp:
             self.downloads.close()
         except Exception:
             LOGGER.exception("关闭文件下载管理器失败")
+        if self._tray is not None:
+            try:
+                self._tray.stop()
+            except Exception:
+                LOGGER.exception("停止系统托盘失败")
+            self._tray = None
         if self._server is not None:
             try:
                 self._server.stop()
@@ -330,6 +357,53 @@ class BetterShutupApp:
                 return
         self._shutdown_app()
 
+    def hide_to_tray(self) -> None:
+        if self._closing:
+            return
+        if self._tray is None or not self._tray.available:
+            # No tray fallback: keep the old close-to-exit behavior so the
+            # process cannot become invisible and impossible to reach.
+            self.request_close()
+            return
+        try:
+            self.root.withdraw()
+        except tk.TclError:
+            return
+        self._log(
+            "info",
+            "主窗口已隐藏到系统托盘；通知、计划关机和定时关机继续运行。",
+        )
+
+    def show_main_window(self) -> None:
+        if self._closing:
+            return
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+        except tk.TclError:
+            pass
+
+    def request_close_from_tray(self) -> None:
+        self.show_main_window()
+        self.request_close()
+
+    def _drain_tray_commands(self) -> None:
+        while True:
+            try:
+                command = self._tray_commands.get_nowait()
+            except queue.Empty:
+                return
+            if command == "show":
+                self.show_main_window()
+            elif command == "hide":
+                self.hide_to_tray()
+            elif command == "settings":
+                self.show_main_window()
+                self.open_settings()
+            elif command == "exit":
+                self.request_close_from_tray()
+
     # --------------------------------------------------------------- logging
     def _log(self, level: str, message: str) -> None:
         log_method = LOGGER.error if level == "error" else LOGGER.info
@@ -369,6 +443,20 @@ class BetterShutupApp:
         if self._closing:
             return
         try:
+            self._drain_tray_commands()
+            if self._closing:
+                return
+            if (
+                self._tray is not None
+                and not self._tray.available
+                and self.root.state() == "withdrawn"
+                and not self._closing
+            ):
+                self.show_main_window()
+                self._log(
+                    "error",
+                    "系统托盘已不可用，主窗口已恢复。",
+                )
             changed = self._drain_events()
             if not self._firing:
                 schedule_transition = self.coordinator.check_schedule(

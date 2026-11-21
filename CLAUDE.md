@@ -7,8 +7,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 BetterShutup is a Windows-only Python/Tkinter application that receives agent
 session messages over a Windows named pipe, shows topmost notifications, and
 optionally shuts the machine down after every registered session completes or
-at a user-scheduled time when sessions are idle or complete. The repository is
-public under GPL-3.0-only.
+at a user-scheduled time when sessions are idle or complete. It runs as a
+system-tray background application; closing the main window hides it while the
+pipe listener, notifications, and shutdown timers keep running. The repository
+is public under GPL-3.0-only.
 
 The desktop app and the Agent Skill are independent deliveries:
 
@@ -193,7 +195,8 @@ after it; preserve that pairing when editing. The parity tests in
   `action_needed`/`has_error` flags for coloring. The header has “日志” and
   “设置” buttons; “日志” opens the rotated file log in the default text editor.
   The scheduled card supports `HH:MM` targets and 1–10080 minute delays and
-  shows target, remaining time, waiting state, and countdown state.
+  shows target, remaining time, waiting state, and countdown state. Its close
+  callback is `BetterShutupApp.hide_to_tray`, not app exit.
 - `ui/notifications.py`: borderless topmost cards, bottom-right stacking,
   completion/message/plan/step/download-success auto-dismiss, and a decorated
   long-text details window. Cards slide/fade in and out, reposition with
@@ -216,6 +219,11 @@ after it; preserve that pairing when editing. The parity tests in
   overrides and preview for the four kinds (`complete`, `action`, `error`,
   `notify`); the data tab shows the data directory and log file and opens
   either through Explorer or the default file association.
+- `ui/tray.py`: Win32 `Shell_NotifyIconW` tray icon on a message-only window and
+  its own message-loop thread. Menu commands (`show`, `hide`, `settings`,
+  `exit`) are put on a thread-safe queue drained by the Tk poll. The icon is
+  re-added on `TaskbarCreated` after Explorer restarts. Never touch Tk from the
+  tray thread.
 - `ui/theme.py`: DPI scaling, fonts, colors, ttk styles.
 - `better_shutup/assets/BetterShutup.ico` is the Tk default window icon and the
   Nuitka `--windows-icon-from-ico` source. The source PNG lives under `assets/`;
@@ -237,11 +245,15 @@ after it; preserve that pairing when editing. The parity tests in
 - Automated tests must never run the real shutdown command. Use `--dry-run`,
   injected/monkeypatched shutdown functions, and unit tests. This is a shared
   machine.
-- The countdown is app-owned; selecting the app's close path must cancel the
-  active countdown and disarm both plan and scheduled triggers before showing
-  any modal confirmation. Do not schedule a system `shutdown` timer that
+- The countdown is app-owned; selecting the app's exit path (tray “退出”) must
+  cancel the active countdown and disarm both plan and scheduled triggers before
+  showing any modal confirmation. Do not schedule a system `shutdown` timer that
   survives app exit. Scheduled shutdown state is in-memory only; restarting or
   crashing the app cancels it.
+- Closing/hiding the main window must not stop the pipe listener, notification
+  manager, schedule checks, or countdown. If the tray icon is unavailable,
+  closing the window falls back to the exit confirmation instead of leaving an
+  unreachable hidden process.
 - Do not execute or eval text received from the pipe. It is only displayed.
 - Status `1000` allows a local agent to make the app fetch an HTTP(S) URL and
   write the response to an arbitrary absolute path. Keep it restricted to
